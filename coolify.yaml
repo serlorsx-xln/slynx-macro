@@ -10,4 +10,5 @@ spec:
       type: web
       port: 8080
       build:
-        compose: docker-compose.coolify.yml
+        # Coolify clones GitHub where this file is published as docker-compose.yml
+        compose: docker-compose.yml

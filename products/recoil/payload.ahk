@@ -49,9 +49,6 @@ CreateProfileOverlay()
 if (MenuHotkey != "")
     Hotkey, %MenuHotkey%, ToggleMenu, On
 
-; Register F8 dynamically (static labels unreliable in stdin mode)
-Hotkey, F8, TestMouseMove, On
-
 SetTimer, LoadSettingsFromUI, 100
 SetTimer, WatchKeys, 10
 

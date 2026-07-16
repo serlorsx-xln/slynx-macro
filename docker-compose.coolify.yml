@@ -1,6 +1,9 @@
 # ===================================================
-# License / auth server — Coolify compose
-# Secrets via Coolify env (PRIVATE_PEM, ADMIN_PASS, AES/HMAC, …)
+# License / auth server - Coolify compose ONLY
+# Desktop/SSH deploy uses docker-compose.yml (bind ./app_db).
+# GitHub slynx-macro publishes this file as docker-compose.yml for Coolify.
+# Secrets via Coolify env (PRIVATE_PEM, ADMIN_PASS, AES/HMAC, ...)
+# Put client.exe in ./seed/client.exe (see scripts/coolify-seed-macro.sh).
 # ===================================================
 name: macro-server
 
@@ -24,6 +27,7 @@ services:
       - app_db:/app/db
       - ./products:/app/products:ro
       - ./payload.ahk:/app/payload.ahk:ro
+      - ./seed:/seed:ro
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
       interval: 30s
