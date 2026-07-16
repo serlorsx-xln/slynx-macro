@@ -1,0 +1,13 @@
+apiVersion: coolify/v1
+kind: Project
+metadata:
+  name: slynx-macro
+  displayName: SLYNX Macro License Server
+spec:
+  runtime: docker
+  services:
+    - name: macro-auth
+      type: web
+      port: 8080
+      build:
+        compose: docker-compose.coolify.yml

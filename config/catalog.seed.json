@@ -1,0 +1,18 @@
+[
+  {
+    "productId": "recoil",
+    "fulfillment": "license",
+    "nameTh": "SLYNX Recoil (PUBG)",
+    "nameEn": "SLYNX Recoil (PUBG)",
+    "descriptionTh": "ควบคุมแรงถีของอาวุธ",
+    "descriptionEn": "Weapon recoil control",
+    "sortOrder": 0,
+    "active": true,
+    "plans": [
+      { "planId": "7d", "nameTh": "7 วัน", "nameEn": "7 Days", "days": 7, "priceThb": 29, "sortOrder": 0, "active": true, "allowRenew": true },
+      { "planId": "30d", "nameTh": "30 วัน", "nameEn": "30 Days", "days": 30, "priceThb": 79, "sortOrder": 1, "active": true, "allowRenew": true },
+      { "planId": "90d", "nameTh": "90 วัน", "nameEn": "90 Days", "days": 90, "priceThb": 149, "sortOrder": 2, "active": true, "allowRenew": true },
+      { "planId": "lifetime", "nameTh": "ตลอดชีพ", "nameEn": "Lifetime", "days": -1, "priceThb": 300, "sortOrder": 3, "active": true, "allowRenew": false }
+    ]
+  }
+]

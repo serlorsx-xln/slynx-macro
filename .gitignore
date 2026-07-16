@@ -1,0 +1,9 @@
+.env
+private.pem
+app_db/
+*.exe
+server_release
+*.db
+*.db-shm
+*.db-wal
+.DS_Store
