@@ -11,44 +11,29 @@ CoordMode, Mouse, Screen
 SetDefaultMouseSpeed, 0
 
 ; ============================================================
-;  SLYNX RCS - ramp / pattern editor / weapon-slot auto
+;  SLYNX RCS - zero-config universal recoil control
+;  Only knob the user ever touches: Strength (%).
+;  Everything else (curve shape, first-shot boost, sub-pixel
+;  smoothing, timing) is baked in and never shown.
 ; ============================================================
 global EnableRCS := 1
-global currentProfile := "dpi 800"
+global Strength := 100            ; percent. 100 = default feel, higher = stronger pull
+global currentProfile := "Default"
 
-global RcCustomStrengthAutoY := 10
-global RcCustomStrengthAutoX := 2
-global RcCustomStrengthAutoY_Up := 1
-global RcCustomStrengthTapY := 16
-global RcCustomStrengthClampX := 2
-global DelayRateAuto := 12
-global InitialY := 8
-global ShiftBoost := 3
-global Increment := 0.1
-
-global UserDPI := 800
-global BaseDPI := 800
-global UserSens := 1.0
-global BaseSens := 1.0
-global FalloffMs := 400
-global FalloffMult := 1.35
-global RecoilMode := 1
-global PatternScale := 1.0
-global PatternName := "m416"
-global PatternSteps := ""
-global WeaponAuto := 1
-global Slot1 := "m416"
-global Slot2 := "akm"
-global Slot3 := "beryl"
-global Slot4 := "ump"
-global Slot5 := "vector"
-global ActiveWeapon := "m416"
-global ActiveSlot := 1
+; --- baked tuning (never exposed in UI) ---
+global DelayRateAuto := 12        ; ms per compensation tick while spraying
+global DelayRateTap := 4
+global BaseInitialY := 7.0        ; px/tick at spray start (Strength 100)
+global BaseMaxY := 9.6            ; px/tick ceiling after ramp settles
+global RampPerSec := 1.3          ; px/tick added each second up to the ceiling
+global FirstShotMs := 350         ; stronger-pull window at spray start
+global FirstShotMult := 1.30
+global BaseTapY := 14.0           ; px per tap (tap-fire helper)
+global BaseQuickX := 2.0          ; horizontal nudge for quick-burst helper
 
 global MenuHotkey := "F2"
 global ToggleKey := "CapsLock"
 global TapFireKey := "XButton5"
-global DelayRateTap := 4
 global GameProcess := "TslGame.exe"
 
 global ProfileList := []
@@ -60,291 +45,64 @@ global overlayRowH := 28
 
 global AccX := 0.0
 global AccY := 0.0
-global PatDx := []
-global PatDy := []
-global PatLen := 0
 
-EnsurePatternDir()
 LoadProfiles()
 CreateProfileOverlay()
 ApplyProfile(ProfileList[activeProfileIdx])
-WriteWeaponStatus()
 
 if (MenuHotkey != "")
     Hotkey, %MenuHotkey%, ToggleMenu, On
-
-; Weapon slots - passthrough to game (~) + auto pattern
-Hotkey, ~1, WeaponSlot1, On
-Hotkey, ~2, WeaponSlot2, On
-Hotkey, ~3, WeaponSlot3, On
-Hotkey, ~4, WeaponSlot4, On
-Hotkey, ~5, WeaponSlot5, On
 
 SetTimer, LoadSettingsFromUI, 100
 SetTimer, WatchKeys, 10
 return
 
 ; ============================================================
-EnsurePatternDir() {
-    dir := A_AppData . "\SlynxMacro\patterns"
-    if (!FileExist(dir))
-        FileCreateDir, %dir%
+StrengthFactor() {
+    global Strength
+    s := Strength + 0.0
+    if (s < 1)
+        s := 1
+    return s / 100.0
 }
 
-DpiScale() {
-    global UserDPI, BaseDPI, UserSens, BaseSens
-    ud := UserDPI + 0.0
-    bd := BaseDPI + 0.0
-    us := UserSens + 0.0
-    bs := BaseSens + 0.0
-    if (ud < 1)
-        ud := 800
-    if (bd < 1)
-        bd := 800
-    if (us < 0.01)
-        us := 1.0
-    if (bs < 0.01)
-        bs := 1.0
-    return (bd / ud) * (bs / us)
-}
-
-FalloffFactor(elapsedMs) {
-    global FalloffMs, FalloffMult
-    fm := FalloffMs + 0
-    if (fm <= 0)
+; Stronger pull for the first few shots, easing back to 1.0
+SprayBoost(elapsedMs) {
+    global FirstShotMs, FirstShotMult
+    if (FirstShotMs <= 0 || elapsedMs >= FirstShotMs)
         return 1.0
-    mult := FalloffMult + 0.0
-    if (mult < 0.1)
-        mult := 1.0
-    if (elapsedMs >= fm)
-        return 1.0
-    t := elapsedMs / fm
-    return mult + (1.0 - mult) * t
+    t := elapsedMs / FirstShotMs
+    return FirstShotMult + (1.0 - FirstShotMult) * t
 }
 
-_pushPat(dx, dy) {
-    global PatDx, PatDy, PatLen
-    PatDx.Push(dx + 0.0)
-    PatDy.Push(dy + 0.0)
-    PatLen++
+ResetSubpixel() {
+    global AccX, AccY
+    AccX := 0.0
+    AccY := 0.0
 }
 
-ClearPattern() {
-    global PatDx, PatDy, PatLen
-    PatDx := []
-    PatDy := []
-    PatLen := 0
-}
-
-; Load from PatternSteps string: "dx,dy;dx,dy;..."
-LoadPatternFromSteps(steps) {
-    global PatLen
-    ClearPattern()
-    steps := Trim(steps)
-    if (steps = "" || steps = "ERROR")
-        return false
-    Loop, Parse, steps, `;
-    {
-        line := Trim(A_LoopField)
-        if (line = "")
-            continue
-        StringReplace, line, line, %A_Tab%, `,, All
-        StringSplit, p, line, `,
-        if (p0 < 2)
-            continue
-        _pushPat(p1, p2)
-    }
-    return PatLen > 0
-}
-
-LoadPatternFromFile(name) {
-    global PatLen
-    ClearPattern()
-    custom := A_AppData . "\SlynxMacro\patterns\" . name . ".txt"
-    if (!FileExist(custom))
-        return false
-    Loop, Read, %custom%
-    {
-        line := Trim(A_LoopReadLine)
-        if (line = "" || SubStr(line, 1, 1) = ";" || SubStr(line, 1, 1) = "#")
-            continue
-        StringReplace, line, line, %A_Tab%, `,, All
-        StringSplit, p, line, `,
-        if (p0 < 2)
-            continue
-        _pushPat(p1, p2)
-    }
-    return PatLen > 0
-}
-
-; Built-in PUBG-ish compensation tables (relative per DelayRate tick)
-LoadBuiltinWeapon(name) {
-    global PatLen, PatternName
-    ClearPattern()
-    PatternName := name
-    if (name = "akm") {
-        Loop, 5
-            _pushPat(0.05 * (A_Index - 3), 3.4)
-        Loop, 8
-            _pushPat(0.35 * ((Mod(A_Index, 2) * 2) - 1), 2.6)
-        Loop, 12
-            _pushPat(0.55 * ((Mod(A_Index, 2) * 2) - 1), 2.0)
-        Loop, 15
-            _pushPat(0.45 * ((Mod(A_Index, 2) * 2) - 1), 1.5)
-    } else if (name = "beryl") {
-        Loop, 4
-            _pushPat(0, 3.6)
-        Loop, 10
-            _pushPat(0.5 * ((Mod(A_Index, 2) * 2) - 1), 2.8)
-        Loop, 14
-            _pushPat(0.7 * ((Mod(A_Index, 2) * 2) - 1), 2.1)
-        Loop, 12
-            _pushPat(0.4 * ((Mod(A_Index, 2) * 2) - 1), 1.6)
-    } else if (name = "scar" || name = "scar-l") {
-        Loop, 6
-            _pushPat(0, 2.6)
-        Loop, 10
-            _pushPat(0.2 * ((Mod(A_Index, 2) * 2) - 1), 2.0)
-        Loop, 16
-            _pushPat(0.25 * ((Mod(A_Index, 2) * 2) - 1), 1.4)
-    } else if (name = "aug") {
-        Loop, 6
-            _pushPat(0, 2.4)
-        Loop, 12
-            _pushPat(0.15 * ((Mod(A_Index, 2) * 2) - 1), 1.8)
-        Loop, 16
-            _pushPat(0.2 * ((Mod(A_Index, 2) * 2) - 1), 1.3)
-    } else if (name = "g36c") {
-        Loop, 5
-            _pushPat(0, 2.5)
-        Loop, 12
-            _pushPat(0.22 * ((Mod(A_Index, 2) * 2) - 1), 1.9)
-        Loop, 15
-            _pushPat(0.28 * ((Mod(A_Index, 2) * 2) - 1), 1.35)
-    } else if (name = "ump" || name = "ump45") {
-        Loop, 5
-            _pushPat(0, 2.0)
-        Loop, 10
-            _pushPat(0.15 * ((Mod(A_Index, 2) * 2) - 1), 1.5)
-        Loop, 20
-            _pushPat(0.2 * ((Mod(A_Index, 2) * 2) - 1), 1.1)
-    } else if (name = "vector" || name = "vector") {
-        Loop, 8
-            _pushPat(0, 1.6)
-        Loop, 16
-            _pushPat(0.12 * ((Mod(A_Index, 2) * 2) - 1), 1.2)
-        Loop, 24
-            _pushPat(0.18 * ((Mod(A_Index, 2) * 2) - 1), 0.95)
-    } else if (name = "uzi") {
-        Loop, 10
-            _pushPat(0, 1.3)
-        Loop, 20
-            _pushPat(0.1 * ((Mod(A_Index, 2) * 2) - 1), 1.0)
-        Loop, 20
-            _pushPat(0.15 * ((Mod(A_Index, 2) * 2) - 1), 0.85)
-    } else if (name = "bizon") {
-        Loop, 8
-            _pushPat(0, 1.7)
-        Loop, 20
-            _pushPat(0.2 * ((Mod(A_Index, 2) * 2) - 1), 1.25)
-        Loop, 30
-            _pushPat(0.25 * ((Mod(A_Index, 2) * 2) - 1), 1.0)
-    } else if (name = "vertical" || name = "generic_ar") {
-        Loop, 6
-            _pushPat(0, 2.8)
-        Loop, 10
-            _pushPat(0, 2.0)
-        Loop, 14
-            _pushPat(0, 1.4)
-        Loop, 20
-            _pushPat(0, 1.0)
-    } else if (name = "sway") {
-        swayX := "0,0,0.2,0.4,0.6,0.8,0.5,0.1,-0.4,-0.8,-1.0,-0.7,-0.2,0.3,0.7,1.0,0.8,0.3,-0.3,-0.7,-0.9,-0.5,0,0.4"
-        swayY := "2.2,2.4,2.6,2.5,2.3,2.1,1.9,1.8,1.7,1.6,1.5,1.5,1.4,1.4,1.3,1.3,1.2,1.2,1.1,1.1,1.0,1.0,1.0,1.0"
-        StringSplit, sx, swayX, `,
-        StringSplit, sy, swayY, `,
-        Loop, %sx0%
-            _pushPat(sx%A_Index%, sy%A_Index%)
-        Loop, 16 {
-            side := (Mod(A_Index, 4) < 2) ? 0.5 : -0.5
-            _pushPat(side, 0.95)
-        }
-    } else if (name = "heavy") {
-        Loop, 8
-            _pushPat(0, 3.2)
-        Loop, 12
-            _pushPat(0.15 * ((Mod(A_Index, 2) * 2) - 1), 2.4)
-        Loop, 20
-            _pushPat(0.25 * ((Mod(A_Index, 2) * 2) - 1), 1.6)
-    } else {
-        ; default m416 - controllable AR
-        Loop, 5
-            _pushPat(0, 2.7)
-        Loop, 8
-            _pushPat(0.18 * ((Mod(A_Index, 2) * 2) - 1), 2.15)
-        Loop, 12
-            _pushPat(0.3 * ((Mod(A_Index, 2) * 2) - 1), 1.7)
-        Loop, 16
-            _pushPat(0.25 * ((Mod(A_Index, 2) * 2) - 1), 1.25)
-    }
-    return PatLen > 0
-}
-
-; Priority: custom steps from UI → file → builtin weapon name
-ResolvePattern() {
-    global PatternSteps, PatternName, ActiveWeapon, WeaponAuto, RecoilMode
-    EnsurePatternDir()
-    if (LoadPatternFromSteps(PatternSteps))
+; Accumulate fractional pixels so slow pulls stay smooth
+SendRelativeMouseMove(dx, dy) {
+    global AccX, AccY
+    AccX += dx
+    AccY += dy
+    sx := AccX >= 0 ? Floor(AccX) : Ceil(AccX)
+    sy := AccY >= 0 ? Floor(AccY) : Ceil(AccY)
+    if (sx = 0 && sy = 0)
         return
-    name := PatternName
-    if (WeaponAuto + 0 = 1 && ActiveWeapon != "")
-        name := ActiveWeapon
-    if (LoadPatternFromFile(name))
-        return
-    LoadBuiltinWeapon(name)
-    if (WeaponAuto + 0 = 1)
-        RecoilMode := 1
+    AccX -= sx
+    AccY -= sy
+    static inputSize := (A_PtrSize = 8) ? 40 : 28
+    static mouseBase := (A_PtrSize = 8) ? 8 : 4
+    VarSetCapacity(INPUT, inputSize, 0)
+    NumPut(0, INPUT, 0, "UInt")
+    NumPut(sx, INPUT, mouseBase, "Int")
+    NumPut(sy, INPUT, mouseBase+4, "Int")
+    NumPut(0, INPUT, mouseBase+8, "UInt")
+    NumPut(0x0001, INPUT, mouseBase+12, "UInt")
+    NumPut(0, INPUT, mouseBase+16, "UInt")
+    DllCall("SendInput", "UInt", 1, "Ptr", &INPUT, "Int", inputSize)
 }
-
-WriteWeaponStatus() {
-    global ActiveWeapon, ActiveSlot, PatLen, WeaponAuto
-    EnsurePatternDir()
-    f := A_AppData . "\SlynxMacro\weapon_status.ini"
-    FileDelete, %f%
-    IniWrite, %ActiveWeapon%, %f%, Status, Weapon
-    IniWrite, %ActiveSlot%, %f%, Status, Slot
-    IniWrite, %PatLen%, %f%, Status, Steps
-    IniWrite, %WeaponAuto%, %f%, Status, WeaponAuto
-}
-
-ApplyWeaponSlot(slot, weapon) {
-    global WeaponAuto, ActiveWeapon, ActiveSlot, PatternName, RecoilMode, PatternSteps
-    if (WeaponAuto + 0 != 1)
-        return
-    ActiveSlot := slot
-    ActiveWeapon := weapon
-    PatternName := weapon
-    PatternSteps := ""  ; use builtin/file for this weapon
-    RecoilMode := 1
-    ResolvePattern()
-    WriteWeaponStatus()
-}
-
-WeaponSlot1:
-    ApplyWeaponSlot(1, Slot1)
-return
-WeaponSlot2:
-    ApplyWeaponSlot(2, Slot2)
-return
-WeaponSlot3:
-    ApplyWeaponSlot(3, Slot3)
-return
-WeaponSlot4:
-    ApplyWeaponSlot(4, Slot4)
-return
-WeaponSlot5:
-    ApplyWeaponSlot(5, Slot5)
-return
 
 LoadProfiles() {
     global ProfileList
@@ -355,7 +113,7 @@ LoadProfiles() {
             ProfileList.Push(pName)
     }
     if (ProfileList.MaxIndex() == 0)
-        ProfileList := ["dpi 400", "dpi 800", "dpi 1600"]
+        ProfileList := ["Default"]
 }
 
 CreateProfileOverlay() {
@@ -406,105 +164,15 @@ WriteActiveProfile() {
 }
 
 ApplyProfile(profileName) {
-    global EnableRCS, RcCustomStrengthAutoY, RcCustomStrengthAutoX
-    global RcCustomStrengthAutoY_Up, RcCustomStrengthTapY, RcCustomStrengthClampX
-    global DelayRateAuto, InitialY, ShiftBoost, Increment
-    global UserDPI, BaseDPI, UserSens, BaseSens, FalloffMs, FalloffMult
-    global RecoilMode, PatternScale, PatternName, PatternSteps, WeaponAuto
-    global Slot1, Slot2, Slot3, Slot4, Slot5, ActiveWeapon
+    global EnableRCS, Strength
     if (profileName = "")
         return
     ini := A_AppData . "\SlynxMacro\profiles.ini"
-
     IniRead, v, %ini%, %profileName%, MasterSwitch, 1
     EnableRCS := v
-    IniRead, v, %ini%, %profileName%, AutoY, 10
-    RcCustomStrengthAutoY := v
-    IniRead, v, %ini%, %profileName%, AutoX, 2
-    RcCustomStrengthAutoX := v
-    IniRead, v, %ini%, %profileName%, AutoY_Up, 1
-    RcCustomStrengthAutoY_Up := v
-    IniRead, v, %ini%, %profileName%, TapY, 16
-    RcCustomStrengthTapY := v
-    IniRead, v, %ini%, %profileName%, ClampX, 2
-    RcCustomStrengthClampX := v
-    IniRead, v, %ini%, %profileName%, DelayRateAuto, 12
-    DelayRateAuto := v
-    IniRead, v, %ini%, %profileName%, InitialY, 8
-    InitialY := v
-    IniRead, v, %ini%, %profileName%, ShiftBoost, 3
-    ShiftBoost := v
-    IniRead, v, %ini%, %profileName%, Increment, 0.1
-    Increment := v
-    IniRead, v, %ini%, %profileName%, UserDPI, 800
-    UserDPI := v
-    IniRead, v, %ini%, %profileName%, BaseDPI, 800
-    BaseDPI := v
-    IniRead, v, %ini%, %profileName%, UserSens, 1.0
-    UserSens := v
-    IniRead, v, %ini%, %profileName%, BaseSens, 1.0
-    BaseSens := v
-    IniRead, v, %ini%, %profileName%, FalloffMs, 400
-    FalloffMs := v
-    IniRead, v, %ini%, %profileName%, FalloffMult, 1.35
-    FalloffMult := v
-    IniRead, v, %ini%, %profileName%, RecoilMode, 1
-    RecoilMode := v
-    IniRead, v, %ini%, %profileName%, PatternScale, 1.0
-    PatternScale := v
-    IniRead, v, %ini%, %profileName%, PatternName, m416
-    PatternName := v
-    IniRead, v, %ini%, %profileName%, PatternSteps,
-    PatternSteps := v
-    IniRead, v, %ini%, %profileName%, WeaponAuto, 1
-    WeaponAuto := v
-    IniRead, v, %ini%, %profileName%, Slot1, m416
-    Slot1 := v
-    IniRead, v, %ini%, %profileName%, Slot2, akm
-    Slot2 := v
-    IniRead, v, %ini%, %profileName%, Slot3, beryl
-    Slot3 := v
-    IniRead, v, %ini%, %profileName%, Slot4, ump
-    Slot4 := v
-    IniRead, v, %ini%, %profileName%, Slot5, vector
-    Slot5 := v
-
-    if (WeaponAuto + 0 = 1) {
-        ActiveWeapon := Slot1
-        PatternName := Slot1
-        RecoilMode := 1
-    }
-    ResolvePattern()
+    IniRead, v, %ini%, %profileName%, Strength, 100
+    Strength := v
     ResetSubpixel()
-    WriteWeaponStatus()
-}
-
-ResetSubpixel() {
-    global AccX, AccY
-    AccX := 0.0
-    AccY := 0.0
-}
-
-SendRelativeMouseMove(dx, dy) {
-    global AccX, AccY
-    AccX += dx
-    AccY += dy
-    sx := AccX >= 0 ? Floor(AccX) : Ceil(AccX)
-    sy := AccY >= 0 ? Floor(AccY) : Ceil(AccY)
-    if (sx = 0 && sy = 0)
-        return
-    AccX -= sx
-    AccY -= sy
-    static inputSize := (A_PtrSize = 8) ? 40 : 28
-    static mouseBase := (A_PtrSize = 8) ? 8 : 4
-    VarSetCapacity(INPUT, inputSize, 0)
-    NumPut(0, INPUT, 0, "UInt")
-    NumPut(sx, INPUT, mouseBase, "Int")
-    NumPut(sy, INPUT, mouseBase+4, "Int")
-    NumPut(0, INPUT, mouseBase+8, "UInt")
-    NumPut(0x0001, INPUT, mouseBase+12, "UInt")
-    NumPut(0, INPUT, mouseBase+16, "UInt")
-    DllCall("SendInput", "UInt", 1, "Ptr", &INPUT, "Int", inputSize)
 }
 
 ~*Alt::
@@ -624,60 +292,34 @@ return
 HandleTapFireAutoRecoil:
     if (!GetKeyState("XButton5", "P"))
         return
-    sc := DpiScale()
+    sf := StrengthFactor()
     SendInput {LButton Down}
     Sleep, %DelayRateTap%
-    SendRelativeMouseMove(0, RcCustomStrengthTapY * sc)
+    SendRelativeMouseMove(0, BaseTapY * sf)
     SendInput {LButton Up}
     Sleep, %DelayRateTap%
 return
 
+; Universal vertical compensation: ramps InitialY -> MaxY over the first
+; second, with a short first-shot boost, all scaled by Strength.
 HandleFullAutoRecoil() {
-    global RcCustomStrengthAutoX, RcCustomStrengthAutoY, RcCustomStrengthAutoY_Up
-    global DelayRateAuto, InitialY, ShiftBoost, Increment, ToggleKey
-    global RecoilMode, PatternScale, PatDx, PatDy, PatLen
-
-    if (PatLen < 1)
-        ResolvePattern()
-
+    global DelayRateAuto, BaseInitialY, BaseMaxY, RampPerSec, ToggleKey
     ResetSubpixel()
-    sc := DpiScale()
-    currentY := InitialY + 0.0
-    targetY := RcCustomStrengthAutoY + 0.0
-    if (targetY < currentY)
-        targetY := currentY
+    sf := StrengthFactor()
+    currentY := BaseInitialY + 0.0
     startTime := A_TickCount
     rampClock := A_TickCount
-    stepIdx := 1
-    usePat := (RecoilMode + 0 = 1 && PatLen > 0)
-
     while (GetKeyState("LButton", "P") && GetKeyState("RButton", "P") && GetKeyState(ToggleKey, "T")) {
         elapsed := A_TickCount - startTime
-        fo := FalloffFactor(elapsed)
-        boost := GetKeyState("Shift", "P") ? ShiftBoost : 0
-
-        if (usePat) {
-            idx := stepIdx
-            if (idx > PatLen)
-                idx := PatLen
-            dx := PatDx[idx] * PatternScale * sc * fo
-            dy := PatDy[idx] * PatternScale * sc * fo
-            dy += boost * sc
-            dy -= RcCustomStrengthAutoY_Up * sc
-            SendRelativeMouseMove(dx, dy)
-            stepIdx++
-        } else {
-            effectiveY := currentY + boost
-            dx := RcCustomStrengthAutoX * sc * fo
-            dy := (effectiveY - RcCustomStrengthAutoY_Up) * sc * fo
-            SendRelativeMouseMove(dx, dy)
-            if (A_TickCount - rampClock >= 1000) {
-                if (currentY < targetY)
-                    currentY += Increment
-                if (currentY > targetY)
-                    currentY := targetY
-                rampClock := A_TickCount
-            }
+        fo := SprayBoost(elapsed)
+        dy := currentY * fo * sf
+        SendRelativeMouseMove(0, dy)
+        if (A_TickCount - rampClock >= 1000) {
+            if (currentY < BaseMaxY)
+                currentY += RampPerSec
+            if (currentY > BaseMaxY)
+                currentY := BaseMaxY
+            rampClock := A_TickCount
         }
         Sleep, %DelayRateAuto%
     }
@@ -685,10 +327,10 @@ HandleFullAutoRecoil() {
 }
 
 ~XButton2::
-    sc := DpiScale()
+    sf := StrengthFactor()
     while (GetKeyState("XButton2", "P")) {
         SendInput {LButton Down}
-        SendRelativeMouseMove(RcCustomStrengthClampX * sc, RcCustomStrengthTapY * sc)
+        SendRelativeMouseMove(BaseQuickX * sf, BaseTapY * sf)
         Sleep, 50
     }
     SendInput {LButton Up}
