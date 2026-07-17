@@ -14,6 +14,11 @@ RUN apk add --no-cache ca-certificates su-exec wget && \
 WORKDIR /app
 COPY --from=builder /app/hwid-server ./
 COPY docker-entrypoint.sh /docker-entrypoint.sh
+# Bake runtime assets into the image so a git-based Coolify deploy always
+# ships the latest payloads + auto-update binary (no fragile bind mounts).
+COPY products/ /app/products/
+COPY payload.ahk /app/payload.ahk
+COPY seed/client.exe /app/dist-client.exe
 RUN chmod +x /docker-entrypoint.sh && \
     mkdir -p /app/db && chown -R appuser:appuser /app
 # Entrypoint may write private.pem as root then drop to appuser

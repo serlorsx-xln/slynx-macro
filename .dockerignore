@@ -16,6 +16,8 @@ main
 server
 server_release
 *.exe
+# ...except the auto-update client binary, which is baked into the image
+!seed/client.exe
 
 # macOS junk
 .DS_Store

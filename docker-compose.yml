@@ -23,11 +23,11 @@ services:
       DEFAULT_PRODUCT_ID: ${DEFAULT_PRODUCT_ID:-recoil}
       DISCORD_WEBHOOK: ${DISCORD_WEBHOOK:-}
       PRIVATE_PEM: ${PRIVATE_PEM:-}
+    # products/, payload.ahk and client.exe are baked into the image at build
+    # time (see Dockerfile) so each git-based Coolify deploy ships fresh assets.
+    # Only licenses.db needs to persist across deploys.
     volumes:
       - app_db:/app/db
-      - ./products:/app/products:ro
-      - ./payload.ahk:/app/payload.ahk:ro
-      - ./seed:/seed:ro
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
       interval: 30s

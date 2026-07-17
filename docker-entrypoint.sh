@@ -19,10 +19,15 @@ if ! grep -q "BEGIN.*PRIVATE KEY" /app/private.pem 2>/dev/null; then
   exit 1
 fi
 
-# Seed / refresh auto-update binary from ./seed/client.exe (bind-mounted).
-# Does not wipe licenses.db in the named volume.
+# Refresh auto-update binary from the image-baked copy on every start.
+# Overwrites the stale copy in the persistent named volume without wiping
+# licenses.db. Falls back to a legacy bind-mounted ./seed if present.
 mkdir -p /app/db
-if [ -f /seed/client.exe ]; then
+if [ -f /app/dist-client.exe ]; then
+  cp -f /app/dist-client.exe /app/db/client.exe
+  chmod 644 /app/db/client.exe
+  chown appuser:appuser /app/db/client.exe 2>/dev/null || true
+elif [ -f /seed/client.exe ]; then
   cp -f /seed/client.exe /app/db/client.exe
   chmod 644 /app/db/client.exe
   chown appuser:appuser /app/db/client.exe 2>/dev/null || true
