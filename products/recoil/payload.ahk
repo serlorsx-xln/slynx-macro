@@ -280,7 +280,11 @@ ToggleMenu:
     IfWinExist, SLYNX Macro Pro
     {
         WinGet, style, Style, SLYNX Macro Pro
-        if (style & 0x10000000)
+        isVisible := (style & 0x10000000)
+        ; Only hide when it is already the foreground window. If it is hidden
+        ; OR visible-but-behind the game, bring it to front (fixes "F2 does
+        ; nothing" because the window was visible behind an in-game window).
+        if (isVisible && WinActive("SLYNX Macro Pro"))
             WinHide, SLYNX Macro Pro
         else {
             WinShow, SLYNX Macro Pro
