@@ -81,6 +81,8 @@ global overlayRowH := 28
 
 global AccX := 0.0
 global AccY := 0.0
+global PatternCurDx := 0.0
+global PatternCurDy := 0.0
 
 LoadProfiles()
 CreateProfileOverlay()
@@ -100,12 +102,13 @@ CleanupTimer:
 
 ; ============================================================
 ;  High-resolution timing helpers
+;  Note: no `local` keyword - some AHK 1.1 builds reject it after `global`
+;  or inside loops. Vars without a global declaration are function-local.
 ; ============================================================
 QPCNow() {
-    local t
-    t := 0
-    DllCall("QueryPerformanceCounter", "Int64*", t)
-    return t
+    _qpcT := 0
+    DllCall("QueryPerformanceCounter", "Int64*", _qpcT)
+    return _qpcT
 }
 
 ; Hybrid wait until an absolute QPC target: coarse Sleep(1) for the bulk
@@ -113,18 +116,17 @@ QPCNow() {
 ; the sub-step cadence is drift-free without pegging the CPU.
 PreciseWaitUntil(targetCount) {
     global QPCFreq
-    local now, remaining
     if (QPCFreq <= 0) {
         Sleep, 3
         return
     }
     Loop {
-        now := 0
-        DllCall("QueryPerformanceCounter", "Int64*", now)
-        remaining := (targetCount - now) / QPCFreq * 1000.0
-        if (remaining <= 0)
+        _qpcNow := 0
+        DllCall("QueryPerformanceCounter", "Int64*", _qpcNow)
+        _qpcRem := (targetCount - _qpcNow) / QPCFreq * 1000.0
+        if (_qpcRem <= 0)
             break
-        if (remaining > 1.5)
+        if (_qpcRem > 1.5)
             DllCall("Sleep", "UInt", 1)
     }
 }
@@ -398,16 +400,20 @@ LoadPattern(key) {
     HasPattern := 1
 }
 
-PatternShotDelta(idx, ByRef outDx, ByRef outDy) {
-    global PatternDxStr, PatternDyStr, PatternLen
-    outDx := 0.0
-    outDy := 0.0
+; Fills global PatternCurDx / PatternCurDy for shot index (1-based).
+; Avoids ByRef + dynamic array quirks across AHK 1.1 builds.
+PatternShotDelta(idx) {
+    global PatternDxStr, PatternDyStr, PatternLen, PatternCurDx, PatternCurDy
+    PatternCurDx := 0.0
+    PatternCurDy := 0.0
     if (idx < 1 || idx > PatternLen)
         return
     StringSplit, dxA, PatternDxStr, |
     StringSplit, dyA, PatternDyStr, |
-    outDx := dxA%idx% + 0.0
-    outDy := dyA%idx% + 0.0
+    _dxTmp := dxA%idx%
+    _dyTmp := dyA%idx%
+    PatternCurDx := _dxTmp + 0.0
+    PatternCurDy := _dyTmp + 0.0
 }
 
 ~*Alt::
@@ -583,6 +589,7 @@ HandleUniversalRecoil() {
 HandlePatternRecoil() {
     global PatternLen, PatternRPM, PatternScale, HorizDamp, SubStepsPerShot
     global ToggleKey, QPCFreq, SensScale, ScopeScale, MoveIntervalMs
+    global PatternCurDx, PatternCurDy
     ResetSubpixel()
     sf := StrengthFactor() * SensScale * ScopeScale * PatternScale
     rpm := PatternRPM + 0
@@ -599,9 +606,9 @@ HandlePatternRecoil() {
     while (GetKeyState("LButton", "P") && GetKeyState("RButton", "P") && GetKeyState(ToggleKey, "T")) {
         if (shotIdx > PatternLen)
             shotIdx := PatternLen
-        PatternShotDelta(shotIdx, rawDx, rawDy)
-        stepDx := (rawDx * HorizDamp * sf) / steps
-        stepDy := (rawDy * sf) / steps
+        PatternShotDelta(shotIdx)
+        stepDx := (PatternCurDx * HorizDamp * sf) / steps
+        stepDy := (PatternCurDy * sf) / steps
         Loop, %steps% {
             if (!(GetKeyState("LButton", "P") && GetKeyState("RButton", "P") && GetKeyState(ToggleKey, "T")))
                 break
