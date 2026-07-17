@@ -28,12 +28,16 @@ SetDefaultMouseSpeed, 0
 global EnableRCS := 1
 global Strength := 100            ; percent. 100 = default feel, higher = stronger pull
 global currentProfile := "Default"
+global PatternKey := ""
+global PatternScope := "RedDot"
+global HasPattern := 0
+global PatternRPM := 650
+global PatternLen := 0
+global PatternDxStr := ""         ; pipe-separated dx floats
+global PatternDyStr := ""         ; pipe-separated dy floats
 
 ; --- baked tuning (never exposed in UI) ---
-; Vertical pull is defined as a RATE (px/second) so it is decoupled from
-; the loop frequency. These values reproduce the previous feel exactly:
-;   old 7.0px / 12ms tick = 583 px/s start, 9.6px / 12ms = 800 px/s max,
-;   +1.3px/tick per second = +108 px/s per second ramp.
+; Universal fallback rate (used when PatternKey missing / load fails).
 global VInitRate := 583.0         ; px/s at spray start (Strength 100)
 global VMaxRate := 800.0          ; px/s ceiling after ramp settles
 global VRampRate := 108.0         ; px/s added each second up to the ceiling
@@ -43,6 +47,15 @@ global FirstShotMs := 350         ; stronger-pull window at spray start
 global FirstShotMult := 1.30
 global BaseTapY := 14.0           ; px per tap (tap-fire helper)
 global BaseQuickX := 2.0          ; horizontal nudge for quick-burst helper
+; Pattern canvas (viewBox 100x650) -> mouse counts. Tuned so Strength 100
+; at GeneralSens=40 feels close to the old universal mid-spray pull.
+global PatternScale := 0.55
+global HorizDamp := 0.12          ; damp SVG horizontal (semi-random in-game)
+global SensScale := 1.0
+global ScopeScale := 1.0
+global GeneralSens := 40.0
+global SensRef := 40.0            ; reference sens for SensScale = SensRef/GeneralSens
+global SubStepsPerShot := 4
 
 ; --- high-resolution timing (QPC) ---
 global QPCFreq := 0
@@ -264,7 +277,7 @@ WriteActiveProfile() {
 }
 
 ApplyProfile(profileName) {
-    global EnableRCS, Strength
+    global EnableRCS, Strength, PatternKey, PatternScope, HasPattern
     if (profileName = "")
         return
     ini := A_AppData . "\SlynxMacro\profiles.ini"
@@ -272,7 +285,127 @@ ApplyProfile(profileName) {
     EnableRCS := v
     IniRead, v, %ini%, %profileName%, Strength, 100
     Strength := v
+    IniRead, v, %ini%, %profileName%, PatternKey,
+    if (v = "ERROR")
+        v := ""
+    PatternKey := v
+    IniRead, v, %ini%, %profileName%, Scope, RedDot
+    if (v = "ERROR" || v = "")
+        v := "RedDot"
+    PatternScope := v
+    RefreshScales()
+    if (PatternKey != "")
+        LoadPattern(PatternKey)
+    else {
+        HasPattern := 0
+        PatternLen := 0
+    }
     ResetSubpixel()
+}
+
+RefreshScales() {
+    global SensScale, ScopeScale, GeneralSens, SensRef, PatternScope
+    cfg := A_AppData . "\SlynxMacro\system_config.ini"
+    IniRead, gs, %cfg%, Settings, GeneralSens, 40
+    if (gs = "ERROR" || gs = "" || gs + 0 <= 0)
+        gs := 40
+    GeneralSens := gs + 0.0
+    SensScale := SensRef / GeneralSens
+
+    scopeKey := PatternScope
+    StringReplace, scopeKey, scopeKey, %A_Space%, , All
+    StringLower, scopeKey, scopeKey
+    ; Normalize common OCR/scan labels to INI keys
+    if (scopeKey = "reddot" || scopeKey = "holo" || scopeKey = "holographic" || scopeKey = "1x" || scopeKey = "canted")
+        iniKey := "ScopeMult_1x"
+    else if (scopeKey = "2x" || scopeKey = "2xaimpoint")
+        iniKey := "ScopeMult_2x"
+    else if (scopeKey = "3x")
+        iniKey := "ScopeMult_3x"
+    else if (scopeKey = "4x")
+        iniKey := "ScopeMult_4x"
+    else if (scopeKey = "6x")
+        iniKey := "ScopeMult_6x"
+    else if (scopeKey = "8x")
+        iniKey := "ScopeMult_8x"
+    else
+        iniKey := "ScopeMult_1x"
+    IniRead, sm, %cfg%, Settings, %iniKey%, 1.0
+    if (sm = "ERROR" || sm = "" || sm + 0 <= 0)
+        sm := 1.0
+    ScopeScale := sm + 0.0
+}
+
+; Load #KEY section from %AppData%\SlynxMacro\patterns_db.txt into pipe strings.
+LoadPattern(key) {
+    global HasPattern, PatternRPM, PatternLen, PatternDxStr, PatternDyStr
+    HasPattern := 0
+    PatternLen := 0
+    PatternDxStr := ""
+    PatternDyStr := ""
+    PatternRPM := 650
+    db := A_AppData . "\SlynxMacro\patterns_db.txt"
+    if (!FileExist(db))
+        return
+    needle := "#KEY " . key
+    FileRead, content, %db%
+    if ErrorLevel
+        return
+    startPos := InStr(content, needle)
+    if (!startPos)
+        return
+    ; Ensure exact key match (next char newline or end)
+    after := SubStr(content, startPos + StrLen(needle), 1)
+    if (after != "`n" && after != "`r" && after != "")
+        return
+    rest := SubStr(content, startPos)
+    endPos := InStr(rest, "#END")
+    if (!endPos)
+        return
+    block := SubStr(rest, 1, endPos - 1)
+    dxParts := ""
+    dyParts := ""
+    n := 0
+    Loop, Parse, block, `n, `r
+    {
+        line := Trim(A_LoopField)
+        if (line = "" || SubStr(line, 1, 1) = "#") {
+            if (SubStr(line, 1, 4) = "#RPM") {
+                StringSplit, rp, line, %A_Space%
+                if (rp0 >= 2)
+                    PatternRPM := rp2 + 0
+            }
+            continue
+        }
+        StringSplit, p, line, `,
+        if (p0 < 2)
+            continue
+        n += 1
+        if (dxParts != "")
+            dxParts .= "|"
+        if (dyParts != "")
+            dyParts .= "|"
+        dxParts .= Trim(p1)
+        dyParts .= Trim(p2)
+    }
+    if (n < 1)
+        return
+    PatternDxStr := dxParts
+    PatternDyStr := dyParts
+    PatternLen := n
+    HasPattern := 1
+}
+
+PatternShotDelta(idx, ByRef outDx, ByRef outDy) {
+    global PatternDxStr, PatternDyStr, PatternLen
+    outDx := 0.0
+    outDy := 0.0
+    if (idx < 1 || idx > PatternLen)
+        return
+    StringSplit, dxA, PatternDxStr, |
+    StringSplit, dyA, PatternDyStr, |
+    outDx := dxA%idx% + 0.0
+    outDy := dyA%idx% + 0.0
 }
 
 ~*Alt::
@@ -332,6 +465,7 @@ LoadSettingsFromUI:
         }
         IniRead, px, %A_AppData%\SlynxMacro\system_config.ini, Settings, PosX, 50
         IniRead, py, %A_AppData%\SlynxMacro\system_config.ini, Settings, PosY, 50
+        RefreshScales()
         IfWinExist, SLYNX Macro Pro
         {
             WinGetPos, winX, winY, winW, winH, SLYNX Macro Pro
@@ -404,16 +538,22 @@ HandleTapFireAutoRecoil:
     Sleep, %DelayRateTap%
 return
 
-; Universal vertical compensation delivered as a high-frequency sub-step
-; glide: the pull is a RATE (px/s) that ramps VInitRate -> VMaxRate over the
-; first second with a short first-shot boost, sliced into ~3ms sub-steps and
-; paced by a QPC hybrid wait. Many tiny drift-free moves + sub-pixel accum =
-; the steadiest vertical line the hardware can produce. Horizontal stays 0 on
-; purpose (PUBG's horizontal recoil is semi-random; fighting it only scatters).
+; Pattern playback when PatternKey is loaded; otherwise universal rate glide.
+; Pattern: per-shot (dx,dy) from SVG catalog, paced by RPM, split into sub-steps,
+; scaled by Strength * SensScale * ScopeScale * PatternScale. Horizontal damped.
 HandleFullAutoRecoil() {
+    global HasPattern, ToggleKey
+    if (HasPattern)
+        HandlePatternRecoil()
+    else
+        HandleUniversalRecoil()
+}
+
+HandleUniversalRecoil() {
     global VInitRate, VMaxRate, VRampRate, MoveIntervalMs, ToggleKey, QPCFreq
+    global SensScale, ScopeScale
     ResetSubpixel()
-    sf := StrengthFactor()
+    sf := StrengthFactor() * SensScale * ScopeScale
     rate := VInitRate + 0.0
     dt := MoveIntervalMs / 1000.0
     intervalCount := (QPCFreq > 0) ? Round(QPCFreq * dt) : 0
@@ -434,6 +574,44 @@ HandleFullAutoRecoil() {
         } else {
             Sleep, %MoveIntervalMs%
         }
+    }
+    ResetSubpixel()
+}
+
+HandlePatternRecoil() {
+    global PatternLen, PatternRPM, PatternScale, HorizDamp, SubStepsPerShot
+    global ToggleKey, QPCFreq, SensScale, ScopeScale, MoveIntervalMs
+    ResetSubpixel()
+    sf := StrengthFactor() * SensScale * ScopeScale * PatternScale
+    rpm := PatternRPM + 0
+    if (rpm < 100)
+        rpm := 600
+    shotMs := 60000.0 / rpm
+    steps := SubStepsPerShot
+    if (steps < 1)
+        steps := 1
+    stepMs := shotMs / steps
+    intervalCount := (QPCFreq > 0) ? Round(QPCFreq * (stepMs / 1000.0)) : 0
+    shotIdx := 1
+    nextTick := QPCNow() + intervalCount
+    while (GetKeyState("LButton", "P") && GetKeyState("RButton", "P") && GetKeyState(ToggleKey, "T")) {
+        if (shotIdx > PatternLen)
+            shotIdx := PatternLen
+        PatternShotDelta(shotIdx, rawDx, rawDy)
+        stepDx := (rawDx * HorizDamp * sf) / steps
+        stepDy := (rawDy * sf) / steps
+        Loop, %steps% {
+            if (!(GetKeyState("LButton", "P") && GetKeyState("RButton", "P") && GetKeyState(ToggleKey, "T")))
+                break
+            SendRelativeMouseMove(stepDx, stepDy)
+            if (intervalCount > 0) {
+                PreciseWaitUntil(nextTick)
+                nextTick += intervalCount
+            } else {
+                Sleep, %MoveIntervalMs%
+            }
+        }
+        shotIdx += 1
     }
     ResetSubpixel()
 }
