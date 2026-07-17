@@ -15,21 +15,44 @@ SetDefaultMouseSpeed, 0
 ;  Only knob the user ever touches: Strength (%).
 ;  Everything else (curve shape, first-shot boost, sub-pixel
 ;  smoothing, timing) is baked in and never shown.
+;
+;  Steadiness pipeline (baked, invisible):
+;   1. High-res 1ms system timer (timeBeginPeriod) so waits are exact.
+;   2. High-frequency sub-step glide (~3ms) driven by a QPC hybrid
+;      wait, so the vertical pull is delivered as many tiny drift-free
+;      moves instead of a few chunky 12ms jumps.
+;   3. Sub-pixel accumulation so fractional px are never lost.
+;   4. Mouse-acceleration guard: warns + one-click disables Windows
+;      "Enhance pointer precision" which otherwise warps compensation.
 ; ============================================================
 global EnableRCS := 1
 global Strength := 100            ; percent. 100 = default feel, higher = stronger pull
 global currentProfile := "Default"
 
 ; --- baked tuning (never exposed in UI) ---
-global DelayRateAuto := 12        ; ms per compensation tick while spraying
+; Vertical pull is defined as a RATE (px/second) so it is decoupled from
+; the loop frequency. These values reproduce the previous feel exactly:
+;   old 7.0px / 12ms tick = 583 px/s start, 9.6px / 12ms = 800 px/s max,
+;   +1.3px/tick per second = +108 px/s per second ramp.
+global VInitRate := 583.0         ; px/s at spray start (Strength 100)
+global VMaxRate := 800.0          ; px/s ceiling after ramp settles
+global VRampRate := 108.0         ; px/s added each second up to the ceiling
+global MoveIntervalMs := 3        ; sub-step period while spraying (~333 Hz)
 global DelayRateTap := 4
-global BaseInitialY := 7.0        ; px/tick at spray start (Strength 100)
-global BaseMaxY := 9.6            ; px/tick ceiling after ramp settles
-global RampPerSec := 1.3          ; px/tick added each second up to the ceiling
 global FirstShotMs := 350         ; stronger-pull window at spray start
 global FirstShotMult := 1.30
 global BaseTapY := 14.0           ; px per tap (tap-fire helper)
 global BaseQuickX := 2.0          ; horizontal nudge for quick-burst helper
+
+; --- high-resolution timing (QPC) ---
+global QPCFreq := 0
+DllCall("QueryPerformanceFrequency", "Int64*", QPCFreq)
+; Force the system timer to 1ms so Sleep/waits are precise (default ~15.6ms).
+DllCall("winmm\timeBeginPeriod", "UInt", 1)
+; Best effort push to 0.5ms via the undocumented NT call (harmless if it fails).
+_ntActualRes := 0
+DllCall("ntdll\NtSetTimerResolution", "UInt", 5000, "Int", 1, "UInt*", _ntActualRes)
+OnExit, CleanupTimer
 
 global MenuHotkey := "F2"
 global ToggleKey := "CapsLock"
@@ -49,12 +72,89 @@ global AccY := 0.0
 LoadProfiles()
 CreateProfileOverlay()
 ApplyProfile(ProfileList[activeProfileIdx])
+CheckMouseAccel()
 
 if (MenuHotkey != "")
     Hotkey, %MenuHotkey%, ToggleMenu, On
 
 SetTimer, LoadSettingsFromUI, 100
 SetTimer, WatchKeys, 10
+return
+
+CleanupTimer:
+    DllCall("winmm\timeEndPeriod", "UInt", 1)
+    ExitApp
+
+; ============================================================
+;  High-resolution timing helpers
+; ============================================================
+QPCNow() {
+    local t := 0
+    DllCall("QueryPerformanceCounter", "Int64*", t)
+    return t
+}
+
+; Hybrid wait until an absolute QPC target: coarse Sleep(1) for the bulk
+; (accurate at 1ms timer res), then a tight spin for the final <1.5ms so
+; the sub-step cadence is drift-free without pegging the CPU.
+PreciseWaitUntil(targetCount) {
+    global QPCFreq
+    if (QPCFreq <= 0) {
+        Sleep, 3
+        return
+    }
+    Loop {
+        local now := 0
+        DllCall("QueryPerformanceCounter", "Int64*", now)
+        remaining := (targetCount - now) / QPCFreq * 1000.0
+        if (remaining <= 0)
+            break
+        if (remaining > 1.5)
+            DllCall("Sleep", "UInt", 1)
+    }
+}
+
+; ============================================================
+;  Mouse-acceleration guard (Windows "Enhance pointer precision")
+;  Warps relative mouse deltas, which desyncs recoil compensation.
+; ============================================================
+CheckMouseAccel() {
+    VarSetCapacity(mp, 12, 0)
+    DllCall("SystemParametersInfo", "UInt", 0x0003, "UInt", 0, "Ptr", &mp, "UInt", 0)
+    accel := NumGet(mp, 8, "Int")
+    if (accel != 0)
+        ShowAccelWarning()
+}
+
+DisableMouseAccel() {
+    VarSetCapacity(mp, 12, 0)
+    NumPut(0, mp, 0, "Int")
+    NumPut(0, mp, 4, "Int")
+    NumPut(0, mp, 8, "Int")
+    ; SPI_SETMOUSE, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE
+    DllCall("SystemParametersInfo", "UInt", 0x0004, "UInt", 0, "Ptr", &mp, "UInt", 3)
+}
+
+ShowAccelWarning() {
+    Gui, Accel:New, +AlwaysOnTop +ToolWindow +HwndAccelHwnd, SLYNX
+    Gui, Accel:Color, 0F0F1A
+    Gui, Accel:Margin, 16, 16
+    Gui, Accel:Font, s10 cFFFFFF, Segoe UI
+    Gui, Accel:Add, Text, w340, Windows "Enhance pointer precision" (mouse accel) กำลังเปิดอยู่`nมันทำให้การชดเชย recoil เพี้ยนและไม่นิ่ง แนะนำให้ปิด
+    Gui, Accel:Font, s9 c9AA0B5
+    Gui, Accel:Add, Text, w340 y+4, ปิดครั้งเดียวพอ ไม่ต้องทำซ้ำ
+    Gui, Accel:Add, Button, gAccelFix w160 x16 y+14 Default, ปิดให้เลย (แนะนำ)
+    Gui, Accel:Add, Button, gAccelSkip w160 x+8, ข้าม
+    Gui, Accel:Show, AutoSize Center
+}
+
+AccelFix:
+    DisableMouseAccel()
+    Gui, Accel:Destroy
+return
+
+AccelSkip:
+    Gui, Accel:Destroy
 return
 
 ; ============================================================
@@ -304,28 +404,36 @@ HandleTapFireAutoRecoil:
     Sleep, %DelayRateTap%
 return
 
-; Universal vertical compensation: ramps InitialY -> MaxY over the first
-; second, with a short first-shot boost, all scaled by Strength.
+; Universal vertical compensation delivered as a high-frequency sub-step
+; glide: the pull is a RATE (px/s) that ramps VInitRate -> VMaxRate over the
+; first second with a short first-shot boost, sliced into ~3ms sub-steps and
+; paced by a QPC hybrid wait. Many tiny drift-free moves + sub-pixel accum =
+; the steadiest vertical line the hardware can produce. Horizontal stays 0 on
+; purpose (PUBG's horizontal recoil is semi-random; fighting it only scatters).
 HandleFullAutoRecoil() {
-    global DelayRateAuto, BaseInitialY, BaseMaxY, RampPerSec, ToggleKey
+    global VInitRate, VMaxRate, VRampRate, MoveIntervalMs, ToggleKey, QPCFreq
     ResetSubpixel()
     sf := StrengthFactor()
-    currentY := BaseInitialY + 0.0
+    rate := VInitRate + 0.0
+    dt := MoveIntervalMs / 1000.0
+    intervalCount := (QPCFreq > 0) ? Round(QPCFreq * dt) : 0
     startTime := A_TickCount
-    rampClock := A_TickCount
+    nextTick := QPCNow() + intervalCount
     while (GetKeyState("LButton", "P") && GetKeyState("RButton", "P") && GetKeyState(ToggleKey, "T")) {
         elapsed := A_TickCount - startTime
         fo := SprayBoost(elapsed)
-        dy := currentY * fo * sf
-        SendRelativeMouseMove(0, dy)
-        if (A_TickCount - rampClock >= 1000) {
-            if (currentY < BaseMaxY)
-                currentY += RampPerSec
-            if (currentY > BaseMaxY)
-                currentY := BaseMaxY
-            rampClock := A_TickCount
+        SendRelativeMouseMove(0, rate * fo * sf * dt)
+        if (rate < VMaxRate) {
+            rate += VRampRate * dt
+            if (rate > VMaxRate)
+                rate := VMaxRate
         }
-        Sleep, %DelayRateAuto%
+        if (intervalCount > 0) {
+            PreciseWaitUntil(nextTick)
+            nextTick += intervalCount
+        } else {
+            Sleep, %MoveIntervalMs%
+        }
     }
     ResetSubpixel()
 }
