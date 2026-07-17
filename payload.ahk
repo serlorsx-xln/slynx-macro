@@ -102,7 +102,8 @@ CleanupTimer:
 ;  High-resolution timing helpers
 ; ============================================================
 QPCNow() {
-    local t := 0
+    local t
+    t := 0
     DllCall("QueryPerformanceCounter", "Int64*", t)
     return t
 }
@@ -112,12 +113,13 @@ QPCNow() {
 ; the sub-step cadence is drift-free without pegging the CPU.
 PreciseWaitUntil(targetCount) {
     global QPCFreq
+    local now, remaining
     if (QPCFreq <= 0) {
         Sleep, 3
         return
     }
     Loop {
-        local now := 0
+        now := 0
         DllCall("QueryPerformanceCounter", "Int64*", now)
         remaining := (targetCount - now) / QPCFreq * 1000.0
         if (remaining <= 0)
