@@ -11,7 +11,7 @@ CoordMode, Mouse, Screen
 SetDefaultMouseSpeed, 0
 
 ; ============================================================
-;  GLOBALS
+;  GLOBALS - scalar ramp + DPI scale + falloff + subpixel + pattern
 ; ============================================================
 global EnableRCS          := 1
 global currentProfile     := "dpi 800"
@@ -25,6 +25,17 @@ global DelayRateAuto            := 12
 global InitialY                 := 8
 global ShiftBoost               := 3
 global Increment                := 0.1
+
+; Formula knobs (new)
+global UserDPI                  := 800
+global BaseDPI                  := 800
+global UserSens                 := 1.0
+global BaseSens                 := 1.0
+global FalloffMs                := 400
+global FalloffMult              := 1.35
+global RecoilMode               := 0      ; 0=ramp 1=pattern
+global PatternScale             := 1.0
+global PatternName              := "vertical"
 
 global MenuHotkey    := "F2"
 global ToggleKey     := "CapsLock"
@@ -40,11 +51,21 @@ global overlayW          := 200
 global overlayRowH       := 28
 global overlayHwnd       := 0
 
+; Sub-pixel accumulators (shared)
+global AccX := 0.0
+global AccY := 0.0
+
+; Pattern buffers (parallel arrays of relative dx/dy per step)
+global PatDx := []
+global PatDy := []
+global PatLen := 0
+
 ; ============================================================
-;  AUTO-EXECUTE — everything below runs once at startup
+;  AUTO-EXECUTE
 ; ============================================================
 LoadProfiles()
 CreateProfileOverlay()
+LoadPattern(PatternName)
 
 if (MenuHotkey != "")
     Hotkey, %MenuHotkey%, ToggleMenu, On
@@ -52,7 +73,7 @@ if (MenuHotkey != "")
 SetTimer, LoadSettingsFromUI, 100
 SetTimer, WatchKeys, 10
 
-return  ; <-- end of auto-execute section
+return
 
 ; ============================================================
 ;  FUNCTIONS
@@ -66,12 +87,111 @@ LoadProfiles() {
             ProfileList.Push(pName)
     }
     if (ProfileList.MaxIndex() == 0)
-        ProfileList := ["Profile 1", "Profile 2", "Profile 3", "Profile 4", "Profile 5"]
+        ProfileList := ["dpi 400", "dpi 800", "dpi 1600"]
+}
+
+DpiScale() {
+    global UserDPI, BaseDPI, UserSens, BaseSens
+    ud := UserDPI + 0.0
+    bd := BaseDPI + 0.0
+    us := UserSens + 0.0
+    bs := BaseSens + 0.0
+    if (ud < 1)
+        ud := 800
+    if (bd < 1)
+        bd := 800
+    if (us < 0.01)
+        us := 1.0
+    if (bs < 0.01)
+        bs := 1.0
+    ; Calibrated at BaseDPI/BaseSens → scale pulls for current setup
+    return (bd / ud) * (bs / us)
+}
+
+FalloffFactor(elapsedMs) {
+    global FalloffMs, FalloffMult
+    fm := FalloffMs + 0
+    if (fm <= 0)
+        return 1.0
+    mult := FalloffMult + 0.0
+    if (mult < 0.1)
+        mult := 1.0
+    if (elapsedMs >= fm)
+        return 1.0
+    ; Linear ease from mult → 1.0 over FalloffMs
+    t := elapsedMs / fm
+    return mult + (1.0 - mult) * t
+}
+
+LoadPattern(name) {
+    global PatDx, PatDy, PatLen, PatternName
+    PatDx := []
+    PatDy := []
+    PatLen := 0
+    PatternName := name
+
+    ; Custom file: %AppData%\SlynxMacro\patterns\<name>.txt  lines: dx,dy
+    custom := A_AppData . "\SlynxMacro\patterns\" . name . ".txt"
+    if (FileExist(custom)) {
+        Loop, Read, %custom%
+        {
+            line := Trim(A_LoopReadLine)
+            if (line = "" || SubStr(line, 1, 1) = ";" || SubStr(line, 1, 1) = "#")
+                continue
+            StringReplace, line, line, %A_Tab%, `,, All
+            StringSplit, p, line, `,
+            if (p0 < 2)
+                continue
+            PatDx.Push(p1 + 0.0)
+            PatDy.Push(p2 + 0.0)
+            PatLen++
+        }
+        if (PatLen > 0)
+            return
+    }
+
+    ; Built-in patterns (relative per tick)
+    if (name = "sway" || name = "s_curve") {
+        ; Up then left/right sway (generic BR-style)
+        swayX := "0,0,0.2,0.4,0.6,0.8,0.5,0.1,-0.4,-0.8,-1.0,-0.7,-0.2,0.3,0.7,1.0,0.8,0.3,-0.3,-0.7,-0.9,-0.5,0,0.4"
+        swayY := "2.2,2.4,2.6,2.5,2.3,2.1,1.9,1.8,1.7,1.6,1.5,1.5,1.4,1.4,1.3,1.3,1.2,1.2,1.1,1.1,1.0,1.0,1.0,1.0"
+        StringSplit, sx, swayX, `,
+        StringSplit, sy, swayY, `,
+        Loop, %sx0%
+            _pushPat(sx%A_Index%, sy%A_Index%)
+        Loop, 16 {
+            side := (Mod(A_Index, 4) < 2) ? 0.5 : -0.5
+            _pushPat(side, 0.95)
+        }
+    } else if (name = "heavy") {
+        Loop, 8
+            _pushPat(0, 3.2)
+        Loop, 12
+            _pushPat(0.15 * (Mod(A_Index, 2) * 2 - 1), 2.4)
+        Loop, 20
+            _pushPat(0.25 * (Mod(A_Index, 2) * 2 - 1), 1.6)
+    } else {
+        ; vertical (default): strong early climb, then settle
+        Loop, 6
+            _pushPat(0, 2.8)
+        Loop, 10
+            _pushPat(0, 2.0)
+        Loop, 14
+            _pushPat(0, 1.4)
+        Loop, 20
+            _pushPat(0, 1.0)
+    }
+}
+
+_pushPat(dx, dy) {
+    global PatDx, PatDy, PatLen
+    PatDx.Push(dx)
+    PatDy.Push(dy)
+    PatLen++
 }
 
 CreateProfileOverlay() {
     global RowText1, RowText2, RowText3, RowText4, RowText5, overlayW, overlayRowH
-    ; All rows same width; alpha: outer=55 mid=130 center=220
     alphas := [55, 130, 220, 130, 55]
     Loop, 5 {
         idx := A_Index
@@ -103,7 +223,6 @@ UpdateOverlay(animate=false) {
         GuiControl, Row%i%:Font, RowText%i%
         GuiControl, Row%i%:,     RowText%i%, %val%
     }
-    ; Quick flash on center row when scrolling
     if (animate) {
         WinSet, Trans, 255, ahk_class AutoHotkeyGUI ahk_id Row3
         Sleep, 80
@@ -122,6 +241,8 @@ ApplyProfile(profileName) {
     global EnableRCS, RcCustomStrengthAutoY, RcCustomStrengthAutoX
     global RcCustomStrengthAutoY_Up, RcCustomStrengthTapY, RcCustomStrengthClampX
     global DelayRateAuto, InitialY, ShiftBoost, Increment
+    global UserDPI, BaseDPI, UserSens, BaseSens, FalloffMs, FalloffMult
+    global RecoilMode, PatternScale, PatternName
     ini := A_AppData . "\SlynxMacro\profiles.ini"
 
     IniRead, v, %ini%, %profileName%, MasterSwitch,  1
@@ -144,15 +265,54 @@ ApplyProfile(profileName) {
     ShiftBoost := v
     IniRead, v, %ini%, %profileName%, Increment, 0.1
     Increment := v
+
+    IniRead, v, %ini%, %profileName%, UserDPI, 800
+    UserDPI := v
+    IniRead, v, %ini%, %profileName%, BaseDPI, 800
+    BaseDPI := v
+    IniRead, v, %ini%, %profileName%, UserSens, 1.0
+    UserSens := v
+    IniRead, v, %ini%, %profileName%, BaseSens, 1.0
+    BaseSens := v
+    IniRead, v, %ini%, %profileName%, FalloffMs, 400
+    FalloffMs := v
+    IniRead, v, %ini%, %profileName%, FalloffMult, 1.35
+    FalloffMult := v
+    IniRead, v, %ini%, %profileName%, RecoilMode, 0
+    RecoilMode := v
+    IniRead, v, %ini%, %profileName%, PatternScale, 1.0
+    PatternScale := v
+    IniRead, v, %ini%, %profileName%, PatternName, vertical
+    PatternName := v
+
+    LoadPattern(PatternName)
+    ResetSubpixel()
 }
 
+ResetSubpixel() {
+    global AccX, AccY
+    AccX := 0.0
+    AccY := 0.0
+}
+
+; Sub-pixel accumulation → integer SendInput moves
 SendRelativeMouseMove(dx, dy) {
+    global AccX, AccY
+    AccX += dx
+    AccY += dy
+    sx := AccX >= 0 ? Floor(AccX) : Ceil(AccX)
+    sy := AccY >= 0 ? Floor(AccY) : Ceil(AccY)
+    if (sx = 0 && sy = 0)
+        return
+    AccX -= sx
+    AccY -= sy
+
     static inputSize := (A_PtrSize = 8) ? 40 : 28
     static mouseBase := (A_PtrSize = 8) ? 8  : 4
     VarSetCapacity(INPUT, inputSize, 0)
     NumPut(0,      INPUT, 0,            "UInt")
-    NumPut(dx,     INPUT, mouseBase,    "Int")
-    NumPut(dy,     INPUT, mouseBase+4,  "Int")
+    NumPut(sx,     INPUT, mouseBase,    "Int")
+    NumPut(sy,     INPUT, mouseBase+4,  "Int")
     NumPut(0,      INPUT, mouseBase+8,  "UInt")
     NumPut(0x0001, INPUT, mouseBase+12, "UInt")
     NumPut(0,      INPUT, mouseBase+16, "UInt")
@@ -162,8 +322,6 @@ SendRelativeMouseMove(dx, dy) {
 ; ============================================================
 ;  HOTKEYS
 ; ============================================================
-
-; Alt held = show profile overlay
 ~*Alt::
     if (!overlayVisible) {
         LoadProfiles()
@@ -181,7 +339,6 @@ SendRelativeMouseMove(dx, dy) {
     }
 return
 
-; Alt released = hide overlay & apply selected profile
 ~*Alt up::
     if (overlayVisible) {
         Loop, 5
@@ -193,7 +350,6 @@ return
     }
 return
 
-; Scroll wheel while Alt held = cycle profiles
 ~*!WheelUp::
     if (activeProfileIdx > 1) {
         activeProfileIdx--
@@ -210,7 +366,6 @@ return
     }
 return
 
-; [TEST] F8 = confirm AHK receives key + try all movement methods
 F8::
     ToolTip, F8 received - testing mouse move
     MouseGetPos, curX, curY
@@ -223,10 +378,8 @@ HideTooltip:
 return
 
 ; ============================================================
-;  TIMER SUBROUTINES
+;  TIMERS
 ; ============================================================
-
-; Reload settings written by Go UI (runs every 100 ms)
 LoadSettingsFromUI:
     IfExist, %A_AppData%\SlynxMacro\system_config.ini
     {
@@ -260,7 +413,6 @@ LoadSettingsFromUI:
         }
     }
 
-    ; Reload profile settings only when profiles.ini changes
     profilesIni := A_AppData . "\SlynxMacro\profiles.ini"
     IfExist, %profilesIni%
     {
@@ -274,26 +426,20 @@ LoadSettingsFromUI:
     }
 return
 
-; Poll input state every 10 ms to drive recoil compensation
 WatchKeys:
-; [TEST MODE] Game window check disabled — re-enable line below for production
-; if (!EnableRCS || !WinActive("ahk_exe " . GameProcess))
-    if (!EnableRCS)
+; Game window gate (re-enabled)
+    if (!EnableRCS || !WinActive("ahk_exe " . GameProcess))
         return
 
     if (GetKeyState(TapFireKey, "P"))
         SetTimer, HandleTapFireAutoRecoil, -10
 
     if (GetKeyState("LButton", "P") && GetKeyState(ToggleKey, "T") && GetKeyState("RButton", "P")) {
-        SetTimer, WatchKeys, Off     ; prevent new threads while recoil loop runs
+        SetTimer, WatchKeys, Off
         HandleFullAutoRecoil()
-        SetTimer, WatchKeys, 10      ; re-enable after buttons released
+        SetTimer, WatchKeys, 10
     }
 return
-
-; ============================================================
-;  SUBROUTINES
-; ============================================================
 
 ToggleMenu:
     DetectHiddenWindows, On
@@ -312,39 +458,73 @@ return
 HandleTapFireAutoRecoil:
     if (!GetKeyState("XButton5", "P"))
         return
+    sc := DpiScale()
     SendInput {LButton Down}
     Sleep, %DelayRateTap%
-    SendRelativeMouseMove(0, RcCustomStrengthTapY)
+    SendRelativeMouseMove(0, RcCustomStrengthTapY * sc)
     SendInput {LButton Up}
     Sleep, %DelayRateTap%
 return
 
 ; ============================================================
-;  FULL-AUTO RECOIL (called directly, not via SetTimer)
+;  FULL-AUTO: ramp (mode 0) or pattern table (mode 1)
 ; ============================================================
 HandleFullAutoRecoil() {
-    global RcCustomStrengthAutoX, RcCustomStrengthAutoY_Up, DelayRateAuto
-    global InitialY, ShiftBoost, Increment, ToggleKey
+    global RcCustomStrengthAutoX, RcCustomStrengthAutoY, RcCustomStrengthAutoY_Up
+    global DelayRateAuto, InitialY, ShiftBoost, Increment, ToggleKey
+    global RecoilMode, PatternScale, PatDx, PatDy, PatLen
 
-    currentY  := InitialY
+    ResetSubpixel()
+    sc := DpiScale()
+    currentY  := InitialY + 0.0
+    targetY   := RcCustomStrengthAutoY + 0.0
+    if (targetY < currentY)
+        targetY := currentY
     startTime := A_TickCount
+    rampClock := A_TickCount
+    stepIdx   := 1
 
     while (GetKeyState("LButton", "P") && GetKeyState("RButton", "P") && GetKeyState(ToggleKey, "T")) {
-        effectiveY := currentY + (GetKeyState("Shift", "P") ? ShiftBoost : 0)
-        SendRelativeMouseMove(RcCustomStrengthAutoX, effectiveY - RcCustomStrengthAutoY_Up)
-        Sleep, %DelayRateAuto%
-        if (A_TickCount - startTime >= 1000) {
-            currentY  += Increment
-            startTime := A_TickCount
+        elapsed := A_TickCount - startTime
+        fo := FalloffFactor(elapsed)
+        boost := GetKeyState("Shift", "P") ? ShiftBoost : 0
+
+        if (RecoilMode + 0 = 1 && PatLen > 0) {
+            ; Pattern table: advance through steps, hold last when past end
+            idx := stepIdx
+            if (idx > PatLen)
+                idx := PatLen
+            dx := PatDx[idx] * PatternScale * sc * fo
+            dy := PatDy[idx] * PatternScale * sc * fo
+            dy += boost * sc
+            dy -= RcCustomStrengthAutoY_Up * sc
+            SendRelativeMouseMove(dx, dy)
+            stepIdx++
+        } else {
+            ; Ramp mode: climb from InitialY toward AutoY (ceiling/target)
+            effectiveY := currentY + boost
+            dx := RcCustomStrengthAutoX * sc * fo
+            dy := (effectiveY - RcCustomStrengthAutoY_Up) * sc * fo
+            SendRelativeMouseMove(dx, dy)
+            if (A_TickCount - rampClock >= 1000) {
+                if (currentY < targetY)
+                    currentY += Increment
+                if (currentY > targetY)
+                    currentY := targetY
+                rampClock := A_TickCount
+            }
         }
+        Sleep, %DelayRateAuto%
     }
+    ResetSubpixel()
 }
 
 ; ===== XButton2 Step Control =====
 ~XButton2::
+    sc := DpiScale()
     while (GetKeyState("XButton2", "P")) {
         SendInput {LButton Down}
-        SendRelativeMouseMove(RcCustomStrengthClampX, RcCustomStrengthTapY)
+        SendRelativeMouseMove(RcCustomStrengthClampX * sc, RcCustomStrengthTapY * sc)
         Sleep, 50
     }
     SendInput {LButton Up}

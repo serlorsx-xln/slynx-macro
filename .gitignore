@@ -4,3 +4,4 @@ private.pem
 seed/client.exe
 server_release
 hwid-server
+.DS_Store
