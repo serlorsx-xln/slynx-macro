@@ -11,13 +11,13 @@ CoordMode, Mouse, Screen
 SetDefaultMouseSpeed, 0
 
 ; ============================================================
-;  SLYNX RCS - merged pre_formula ramp + Strength/first-shot/subpixel
-;  Phase 2: baked weapon presets + Scope multiplier + Alt+scroll
+;  SLYNX RCS - Profile = weapon curve
+;  Strength + DPI/Sens + Scope scale the profile knobs
+;  Alt+scroll cycles profiles (guns)
 ; ============================================================
 global EnableRCS := 1
 global Strength := 100
-global currentProfile := "Default"
-global currentWeapon := "Universal"
+global currentProfile := "Universal"
 global currentScope := "1x"
 
 global InitialY := 8.0
@@ -31,6 +31,11 @@ global Increment := 0.1
 global DelayRateAuto := 12
 global DelayRateTap := 4
 
+global UserDPI := 800
+global BaseDPI := 800
+global UserSens := 50
+global BaseSens := 50
+
 global FirstShotMs := 350
 global FirstShotMult := 1.30
 global ScopeMult := 1.0
@@ -42,8 +47,6 @@ global GameProcess := "TslGame.exe"
 
 global ProfileList := []
 global activeProfileIdx := 1
-global WeaponList := []
-global activeWeaponIdx := 1
 global overlayVisible := false
 global _lastProfileMtime := ""
 global overlayW := 200
@@ -52,10 +55,8 @@ global overlayRowH := 28
 global AccX := 0.0
 global AccY := 0.0
 
-InitWeaponList()
 LoadProfiles()
 CreateProfileOverlay()
-ApplyWeaponByName(currentWeapon)
 ApplyProfile(ProfileList[activeProfileIdx])
 
 if (MenuHotkey != "")
@@ -66,80 +67,6 @@ SetTimer, WatchKeys, 10
 return
 
 ; ============================================================
-InitWeaponList() {
-    global WeaponList, activeWeaponIdx, currentWeapon
-    ; Order shown in Alt+scroll overlay
-    WeaponList := ["Universal", "M416", "AKM", "Beryl", "SCAR", "AUG", "UMP", "Vector", "Uzi", "Bizon"]
-    activeWeaponIdx := 1
-    currentWeapon := WeaponList[1]
-}
-
-; Baked vertical feel per weapon (Strength 100 / Scope 1x baseline)
-LoadWeaponPreset(name) {
-    global InitialY, AutoY, AutoX, Increment, DelayRateAuto
-    if (name = "M416") {
-        InitialY := 7.5
-        AutoY := 9.5
-        AutoX := 1.5
-        Increment := 0.09
-        DelayRateAuto := 12
-    } else if (name = "AKM") {
-        InitialY := 9.0
-        AutoY := 12.0
-        AutoX := 2.5
-        Increment := 0.14
-        DelayRateAuto := 11
-    } else if (name = "Beryl") {
-        InitialY := 9.5
-        AutoY := 13.0
-        AutoX := 2.8
-        Increment := 0.15
-        DelayRateAuto := 11
-    } else if (name = "SCAR") {
-        InitialY := 7.2
-        AutoY := 9.2
-        AutoX := 1.4
-        Increment := 0.08
-        DelayRateAuto := 12
-    } else if (name = "AUG") {
-        InitialY := 7.0
-        AutoY := 9.0
-        AutoX := 1.3
-        Increment := 0.08
-        DelayRateAuto := 12
-    } else if (name = "UMP") {
-        InitialY := 6.5
-        AutoY := 8.5
-        AutoX := 1.2
-        Increment := 0.07
-        DelayRateAuto := 13
-    } else if (name = "Vector") {
-        InitialY := 5.5
-        AutoY := 7.5
-        AutoX := 1.0
-        Increment := 0.06
-        DelayRateAuto := 10
-    } else if (name = "Uzi") {
-        InitialY := 5.0
-        AutoY := 7.0
-        AutoX := 1.0
-        Increment := 0.05
-        DelayRateAuto := 10
-    } else if (name = "Bizon") {
-        InitialY := 6.0
-        AutoY := 8.0
-        AutoX := 1.2
-        Increment := 0.07
-        DelayRateAuto := 12
-    } else {
-        InitialY := 8.0
-        AutoY := 10.0
-        AutoX := 2.0
-        Increment := 0.1
-        DelayRateAuto := 12
-    }
-}
-
 ScopeMultiplier(scopeName) {
     if (scopeName = "2x")
         return 1.30
@@ -152,34 +79,26 @@ ScopeMultiplier(scopeName) {
     return 1.00
 }
 
-ApplyWeaponByName(name) {
-    global WeaponList, activeWeaponIdx, currentWeapon
-    if (name = "")
-        name := "Universal"
-    found := 0
-    Loop % WeaponList.MaxIndex() {
-        if (WeaponList[A_Index] = name) {
-            activeWeaponIdx := A_Index
-            found := 1
-            break
-        }
-    }
-    if (!found) {
-        activeWeaponIdx := 1
-        name := WeaponList[1]
-    }
-    currentWeapon := name
-    LoadWeaponPreset(name)
-    WriteActiveWeapon()
-    ResetSubpixel()
-}
-
-StrengthFactor() {
-    global Strength
-    s := Strength + 0.0
-    if (s < 1)
-        s := 1
-    return s / 100.0
+; Strength * DPI/sens * Scope
+PullScale() {
+    global Strength, UserDPI, BaseDPI, UserSens, BaseSens, ScopeMult
+    sf := Strength + 0.0
+    if (sf < 1)
+        sf := 1
+    sf := sf / 100.0
+    ud := UserDPI + 0.0
+    bd := BaseDPI + 0.0
+    us := UserSens + 0.0
+    bs := BaseSens + 0.0
+    if (ud < 1)
+        ud := 1
+    if (bd < 1)
+        bd := 800
+    if (us < 0.1)
+        us := 0.1
+    if (bs < 0.1)
+        bs := 50
+    return sf * (bd / ud) * (bs / us) * ScopeMult
 }
 
 SprayBoost(elapsedMs) {
@@ -227,7 +146,7 @@ LoadProfiles() {
             ProfileList.Push(pName)
     }
     if (ProfileList.MaxIndex() == 0)
-        ProfileList := ["Default"]
+        ProfileList := ["Universal", "M416", "AKM", "Beryl", "SCAR", "AUG", "UMP", "Vector", "Uzi", "Bizon"]
 }
 
 CreateProfileOverlay() {
@@ -247,13 +166,12 @@ CreateProfileOverlay() {
     }
 }
 
-; Overlay lists weapons (phase 2), not profiles
 UpdateOverlay(animate=false) {
-    global WeaponList, activeWeaponIdx
+    global ProfileList, activeProfileIdx
     Loop, 5 {
         i := A_Index
-        idx := activeWeaponIdx - 3 + i
-        val := (idx >= 1 && idx <= WeaponList.MaxIndex()) ? WeaponList[idx] : ""
+        idx := activeProfileIdx - 3 + i
+        val := (idx >= 1 && idx <= ProfileList.MaxIndex()) ? ProfileList[idx] : ""
         dist := Abs(i - 3)
         if (dist = 0)
             Gui, Row%i%:Font, s14 cFFFFFF bold, Segoe UI
@@ -271,12 +189,6 @@ UpdateOverlay(animate=false) {
     }
 }
 
-WriteActiveWeapon() {
-    global currentWeapon
-    filePath := A_AppData . "\SlynxMacro\active_weapon.ini"
-    FileOpen(filePath, "w").Write(currentWeapon)
-}
-
 WriteActiveProfile() {
     global ProfileList, activeProfileIdx
     profileName := ProfileList[activeProfileIdx]
@@ -285,11 +197,12 @@ WriteActiveProfile() {
 }
 
 ApplyProfile(profileName) {
-    global EnableRCS, Strength, currentScope, ScopeMult
+    global EnableRCS, Strength, currentScope, ScopeMult, currentProfile
     global InitialY, AutoY, AutoX, AutoY_Up, TapY, ClampX, ShiftBoost, Increment, DelayRateAuto
-    global currentWeapon
+    global UserDPI, BaseDPI, UserSens, BaseSens
     if (profileName = "")
         return
+    currentProfile := profileName
     ini := A_AppData . "\SlynxMacro\profiles.ini"
 
     IniRead, v, %ini%, %profileName%, MasterSwitch, 1
@@ -302,20 +215,21 @@ ApplyProfile(profileName) {
     currentScope := v
     ScopeMult := ScopeMultiplier(currentScope)
 
-    IniRead, wpn, %ini%, %profileName%, Weapon, Universal
-    if (wpn != "ERROR" && wpn != "")
-        ApplyWeaponByName(wpn)
+    IniRead, v, %ini%, %profileName%, UserDPI, 800
+    UserDPI := (v = "ERROR" || v = "") ? 800 : v + 0
+    IniRead, v, %ini%, %profileName%, BaseDPI, 800
+    BaseDPI := (v = "ERROR" || v = "") ? 800 : v + 0
+    IniRead, v, %ini%, %profileName%, UserSens, 50
+    UserSens := (v = "ERROR" || v = "") ? 50 : v + 0.0
+    IniRead, v, %ini%, %profileName%, BaseSens, 50
+    BaseSens := (v = "ERROR" || v = "") ? 50 : v + 0.0
 
-    ; Advanced overrides from profile (after weapon base)
-    IniRead, v, %ini%, %profileName%, InitialY, %InitialY%
-    if (v != "ERROR" && v != "")
-        InitialY := v + 0.0
-    IniRead, v, %ini%, %profileName%, AutoY, %AutoY%
-    if (v != "ERROR" && v != "")
-        AutoY := v + 0.0
-    IniRead, v, %ini%, %profileName%, AutoX, %AutoX%
-    if (v != "ERROR" && v != "")
-        AutoX := v + 0.0
+    IniRead, v, %ini%, %profileName%, InitialY, 8
+    InitialY := (v = "ERROR" || v = "") ? 8.0 : v + 0.0
+    IniRead, v, %ini%, %profileName%, AutoY, 10
+    AutoY := (v = "ERROR" || v = "") ? 10.0 : v + 0.0
+    IniRead, v, %ini%, %profileName%, AutoX, 2
+    AutoX := (v = "ERROR" || v = "") ? 2.0 : v + 0.0
     IniRead, v, %ini%, %profileName%, AutoY_Up, 1
     AutoY_Up := (v = "ERROR" || v = "") ? 1.0 : v + 0.0
     IniRead, v, %ini%, %profileName%, TapY, 16
@@ -324,18 +238,17 @@ ApplyProfile(profileName) {
     ClampX := (v = "ERROR" || v = "") ? 2.0 : v + 0.0
     IniRead, v, %ini%, %profileName%, ShiftBoost, 3
     ShiftBoost := (v = "ERROR" || v = "") ? 3.0 : v + 0.0
-    IniRead, v, %ini%, %profileName%, Increment, %Increment%
-    if (v != "ERROR" && v != "")
-        Increment := v + 0.0
-    IniRead, v, %ini%, %profileName%, DelayRateAuto, %DelayRateAuto%
-    if (v != "ERROR" && v != "")
-        DelayRateAuto := v + 0
+    IniRead, v, %ini%, %profileName%, Increment, 0.1
+    Increment := (v = "ERROR" || v = "") ? 0.1 : v + 0.0
+    IniRead, v, %ini%, %profileName%, DelayRateAuto, 12
+    DelayRateAuto := (v = "ERROR" || v = "") ? 12 : v + 0
 
     ResetSubpixel()
 }
 
 ~*Alt::
     if (!overlayVisible) {
+        LoadProfiles()
         UpdateOverlay()
         marginR := 20
         totalH := 5 * overlayRowH
@@ -351,50 +264,29 @@ ApplyProfile(profileName) {
 return
 
 ~*Alt up::
-    global WeaponList, activeWeaponIdx, ProfileList, activeProfileIdx
-    global Strength, currentScope, ScopeMult, AutoY_Up, TapY, ClampX, ShiftBoost, currentWeapon, currentProfile
     if (overlayVisible) {
         Loop, 5
             Gui, Row%A_Index%:Hide
         overlayVisible := false
-        ApplyWeaponByName(WeaponList[activeWeaponIdx])
-        ; Keep Strength/Scope helpers from current profile; weapon baked values stay
         currentProfile := ProfileList[activeProfileIdx]
-        if (currentProfile != "") {
-            ini := A_AppData . "\SlynxMacro\profiles.ini"
-            IniRead, v, %ini%, %currentProfile%, Strength, 100
-            Strength := v
-            IniRead, v, %ini%, %currentProfile%, Scope, 1x
-            if (v = "ERROR" || v = "")
-                v := "1x"
-            currentScope := v
-            ScopeMult := ScopeMultiplier(currentScope)
-            IniRead, v, %ini%, %currentProfile%, AutoY_Up, 1
-            AutoY_Up := (v = "ERROR" || v = "") ? 1.0 : v + 0.0
-            IniRead, v, %ini%, %currentProfile%, TapY, 16
-            TapY := (v = "ERROR" || v = "") ? 16.0 : v + 0.0
-            IniRead, v, %ini%, %currentProfile%, ClampX, 2
-            ClampX := (v = "ERROR" || v = "") ? 2.0 : v + 0.0
-            IniRead, v, %ini%, %currentProfile%, ShiftBoost, 3
-            ShiftBoost := (v = "ERROR" || v = "") ? 3.0 : v + 0.0
-            IniWrite, %currentWeapon%, %ini%, %currentProfile%, Weapon
-        }
+        if (currentProfile != "")
+            ApplyProfile(currentProfile)
     }
 return
 
 ~*!WheelUp::
-    if (activeWeaponIdx > 1) {
-        activeWeaponIdx--
+    if (activeProfileIdx > 1) {
+        activeProfileIdx--
         UpdateOverlay(true)
-        WriteActiveWeapon()
+        WriteActiveProfile()
     }
 return
 
 ~*!WheelDown::
-    if (activeWeaponIdx < WeaponList.MaxIndex()) {
-        activeWeaponIdx++
+    if (activeProfileIdx < ProfileList.MaxIndex()) {
+        activeProfileIdx++
         UpdateOverlay(true)
-        WriteActiveWeapon()
+        WriteActiveProfile()
     }
 return
 
@@ -472,19 +364,18 @@ return
 HandleTapFireAutoRecoil:
     if (!GetKeyState("XButton5", "P"))
         return
-    sf := StrengthFactor()
+    sc := PullScale()
     SendInput {LButton Down}
     Sleep, %DelayRateTap%
-    SendRelativeMouseMove(0, TapY * sf * ScopeMult)
+    SendRelativeMouseMove(0, TapY * sc)
     SendInput {LButton Up}
     Sleep, %DelayRateTap%
 return
 
-; Ramp InitialY -> AutoY, first-shot boost, Strength + Scope scale, sub-pixel
 HandleFullAutoRecoil() {
-    global DelayRateAuto, InitialY, AutoY, AutoX, AutoY_Up, ShiftBoost, Increment, ToggleKey, ScopeMult
+    global DelayRateAuto, InitialY, AutoY, AutoX, AutoY_Up, ShiftBoost, Increment, ToggleKey
     ResetSubpixel()
-    sf := StrengthFactor()
+    sc := PullScale()
     currentY := InitialY + 0.0
     maxY := AutoY + 0.0
     if (maxY < currentY)
@@ -495,8 +386,8 @@ HandleFullAutoRecoil() {
         elapsed := A_TickCount - startTime
         fo := SprayBoost(elapsed)
         boost := GetKeyState("Shift", "P") ? ShiftBoost : 0
-        dy := (currentY + boost) * fo * sf * ScopeMult - AutoY_Up * sf
-        dx := AutoX * sf * ScopeMult
+        dy := (currentY + boost) * fo * sc - AutoY_Up * sc
+        dx := AutoX * sc
         SendRelativeMouseMove(dx, dy)
         if (A_TickCount - rampClock >= 1000) {
             currentY += Increment
@@ -510,10 +401,10 @@ HandleFullAutoRecoil() {
 }
 
 ~XButton2::
-    sf := StrengthFactor()
+    sc := PullScale()
     while (GetKeyState("XButton2", "P")) {
         SendInput {LButton Down}
-        SendRelativeMouseMove(ClampX * sf, TapY * sf * ScopeMult)
+        SendRelativeMouseMove(ClampX * sc, TapY * sc)
         Sleep, 50
     }
     SendInput {LButton Up}
