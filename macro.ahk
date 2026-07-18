@@ -48,8 +48,14 @@ global ProfileList := []
 global activeProfileIdx := 1
 global overlayVisible := false
 global _lastProfileMtime := ""
-global overlayW := 200
-global overlayRowH := 28
+global overlayW := 248
+global overlayRowH := 34
+global overlayGap := 4
+global RowHwnd1 := 0
+global RowHwnd2 := 0
+global RowHwnd3 := 0
+global RowHwnd4 := 0
+global RowHwnd5 := 0
 
 global AccX := 0.0
 global AccY := 0.0
@@ -184,42 +190,74 @@ LoadGlobals(ini, profileName) {
 }
 
 CreateProfileOverlay() {
-    global RowText1, RowText2, RowText3, RowText4, RowText5, overlayW, overlayRowH
-    alphas := [55, 130, 220, 130, 55]
+    global RowText1, RowText2, RowText3, RowText4, RowText5
+    global RowHwnd1, RowHwnd2, RowHwnd3, RowHwnd4, RowHwnd5
+    global overlayW, overlayRowH
     Loop, 5 {
         idx := A_Index
-        a := alphas[idx]
         Gui, Row%idx%:New, +AlwaysOnTop -Caption +ToolWindow +HwndTmpHwnd
-        Gui, Row%idx%:Color, 0A0A14
-        Gui, Row%idx%:Add, Text, vRowText%idx% w%overlayW% h%overlayRowH% +Center +0x200 BackgroundTrans,
+        Gui, Row%idx%:Margin, 0, 0
+        Gui, Row%idx%:Color, 0C0C12
+        Gui, Row%idx%:Font, s12 cAAAAAA norm, Segoe UI
+        Gui, Row%idx%:Add, Text, vRowText%idx% x14 y0 w%overlayW% h%overlayRowH% +0x200 BackgroundTrans,
         Gui, Row%idx%:Show, w%overlayW% h%overlayRowH% x-5000 y-5000 NoActivate
         Sleep, 10
-        WinSet, Trans, %a%, ahk_id %TmpHwnd%
+        RowHwnd%idx% := TmpHwnd
+        WinSet, Trans, 160, ahk_id %TmpHwnd%
         WinSet, ExStyle, +0x20, ahk_id %TmpHwnd%
         Gui, Row%idx%:Hide
     }
 }
 
+OverlayStrengthFor(profileName) {
+    if (profileName = "")
+        return ""
+    ini := A_AppData . "\SlynxMacro\profiles.ini"
+    IniRead, v, %ini%, %profileName%, Strength, 100
+    if (v = "ERROR" || v = "")
+        v := 100
+    return v
+}
+
 UpdateOverlay(animate=false) {
     global ProfileList, activeProfileIdx
+    global RowHwnd1, RowHwnd2, RowHwnd3, RowHwnd4, RowHwnd5
+    ; dist 0 = selected (center). Soft wheel-picker look.
+    alphas := [70, 140, 245, 140, 70]
+    bgs := ["0A0A10", "101018", "152238", "101018", "0A0A10"]
     Loop, 5 {
         i := A_Index
         idx := activeProfileIdx - 3 + i
-        val := (idx >= 1 && idx <= ProfileList.MaxIndex()) ? ProfileList[idx] : ""
+        name := (idx >= 1 && idx <= ProfileList.MaxIndex()) ? ProfileList[idx] : ""
         dist := Abs(i - 3)
-        if (dist = 0)
-            Gui, Row%i%:Font, s14 cFFFFFF bold, Segoe UI
-        else if (dist = 1)
-            Gui, Row%i%:Font, s11 cCCCCCC norm, Segoe UI
-        else
-            Gui, Row%i%:Font, s10 c888888 norm, Segoe UI
+        bg := bgs[i]
+        Gui, Row%i%:Color, %bg%
+        if (name = "") {
+            label := ""
+            Gui, Row%i%:Font, s11 c555555 norm, Segoe UI
+        } else if (dist = 0) {
+            st := OverlayStrengthFor(name)
+            label := "▸  " . name . "   ·   " . st . "%"
+            Gui, Row%i%:Font, s13 cFFFFFF bold, Segoe UI
+        } else if (dist = 1) {
+            label := name
+            Gui, Row%i%:Font, s12 cC8C8D0 norm, Segoe UI
+        } else {
+            label := name
+            Gui, Row%i%:Font, s11 c6B6B78 norm, Segoe UI
+        }
         GuiControl, Row%i%:Font, RowText%i%
-        GuiControl, Row%i%:, RowText%i%, %val%
+        GuiControl, Row%i%:, RowText%i%, %label%
+        hwnd := RowHwnd%i%
+        a := alphas[i]
+        if (hwnd)
+            WinSet, Trans, %a%, ahk_id %hwnd%
     }
-    if (animate) {
-        WinSet, Trans, 255, ahk_class AutoHotkeyGUI ahk_id Row3
-        Sleep, 80
-        WinSet, Trans, 220, ahk_class AutoHotkeyGUI ahk_id Row3
+    if (animate && RowHwnd3) {
+        hwnd := RowHwnd3
+        WinSet, Trans, 255, ahk_id %hwnd%
+        Sleep, 70
+        WinSet, Trans, 245, ahk_id %hwnd%
     }
 }
 
@@ -269,13 +307,13 @@ ApplyProfile(profileName) {
     if (!overlayVisible) {
         LoadProfiles()
         UpdateOverlay()
-        marginR := 20
-        totalH := 5 * overlayRowH
+        marginR := 28
+        totalH := (5 * overlayRowH) + (4 * overlayGap)
         startY := (A_ScreenHeight / 2) - (totalH / 2)
         xPos := A_ScreenWidth - overlayW - marginR
         Loop, 5 {
             i := A_Index
-            yPos := startY + (i - 1) * overlayRowH
+            yPos := startY + (i - 1) * (overlayRowH + overlayGap)
             Gui, Row%i%:Show, NoActivate x%xPos% y%yPos% w%overlayW% h%overlayRowH%
         }
         overlayVisible := true
