@@ -12,8 +12,8 @@ SetDefaultMouseSpeed, 0
 
 ; ============================================================
 ;  SLYNX RCS - Profile = gun curve
-;  Globals (Strength/DPI/Sens) live in [MasterSwitch]
-;  Per-gun knobs live in each [Profile] section
+;  Machine globals (DPI/Sens/Enable) live in [MasterSwitch]
+;  Per-gun Strength + curve knobs live in each [Profile] section
 ;  Alt+scroll cycles profiles (guns)
 ; ============================================================
 global EnableRCS := 1
@@ -155,17 +155,12 @@ RestoreActiveProfileIdx() {
 }
 
 LoadGlobals(ini, profileName) {
-    global EnableRCS, Strength, UserDPI, BaseDPI, UserSens, BaseSens
-    ; Prefer [MasterSwitch] machine-wide values; fall back to profile section (old INI).
+    global EnableRCS, UserDPI, BaseDPI, UserSens, BaseSens
+    ; Machine-wide from [MasterSwitch]; Strength is per-gun (loaded in ApplyProfile).
     IniRead, v, %ini%, MasterSwitch, EnableRCS, ERROR
     if (v = "ERROR" || v = "")
         IniRead, v, %ini%, %profileName%, MasterSwitch, 1
     EnableRCS := v
-
-    IniRead, v, %ini%, MasterSwitch, Strength, ERROR
-    if (v = "ERROR" || v = "")
-        IniRead, v, %ini%, %profileName%, Strength, 100
-    Strength := v
 
     IniRead, v, %ini%, MasterSwitch, UserDPI, ERROR
     if (v = "ERROR" || v = "")
@@ -236,7 +231,7 @@ WriteActiveProfile() {
 }
 
 ApplyProfile(profileName) {
-    global currentProfile
+    global currentProfile, Strength
     global InitialY, AutoY, AutoX, AutoY_Up, TapY, ClampX, ShiftBoost, Increment, DelayRateAuto
     if (profileName = "")
         return
@@ -244,6 +239,9 @@ ApplyProfile(profileName) {
     ini := A_AppData . "\SlynxMacro\profiles.ini"
 
     LoadGlobals(ini, profileName)
+
+    IniRead, v, %ini%, %profileName%, Strength, 100
+    Strength := (v = "ERROR" || v = "") ? 100 : v + 0
 
     IniRead, v, %ini%, %profileName%, InitialY, 8
     InitialY := (v = "ERROR" || v = "") ? 8.0 : v + 0.0
