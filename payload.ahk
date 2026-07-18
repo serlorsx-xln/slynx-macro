@@ -22,10 +22,10 @@ global currentProfile := "Universal"
 
 global InitialY := 8.0
 global AutoY := 10.0
-global AutoX := 0.0
-global AutoY_Up := 0.5
+global AutoX := 2.0
+global AutoY_Up := 1.0
 global TapY := 16.0
-global ClampX := 0.0
+global ClampX := 2.0
 global ShiftBoost := 3.0
 global Increment := 0.1
 global DelayRateAuto := 12
@@ -35,10 +35,6 @@ global UserDPI := 800
 global BaseDPI := 800
 global UserSens := 50
 global BaseSens := 50
-
-; Softer first-shot boost = less "pop" on early rounds
-global FirstShotMs := 220
-global FirstShotMult := 1.12
 
 global MenuHotkey := "F2"
 global ToggleKey := "CapsLock"
@@ -96,33 +92,10 @@ PullScale() {
     return sf * (bd / ud) * (bs / us)
 }
 
-SprayBoost(elapsedMs) {
-    global FirstShotMs, FirstShotMult
-    if (FirstShotMs <= 0 || elapsedMs >= FirstShotMs)
-        return 1.0
-    t := elapsedMs / FirstShotMs
-    return FirstShotMult + (1.0 - FirstShotMult) * t
-}
-
 ResetSubpixel() {
     global AccX, AccY
     AccX := 0.0
     AccY := 0.0
-}
-
-; Tighter cadence than Sleep alone (Windows timer ~15ms).
-PreciseSleep(ms) {
-    if (ms <= 0)
-        return
-    DllCall("QueryPerformanceFrequency", "Int64*", freq)
-    DllCall("QueryPerformanceCounter", "Int64*", start)
-    if (ms > 2)
-        Sleep, % ms - 2
-    Loop {
-        DllCall("QueryPerformanceCounter", "Int64*", now)
-        if (((now - start) * 1000) / freq >= ms)
-            break
-    }
 }
 
 SendRelativeMouseMove(dx, dy) {
@@ -301,14 +274,14 @@ ApplyProfile(profileName) {
     InitialY := (v = "ERROR" || v = "") ? 8.0 : v + 0.0
     IniRead, v, %ini%, %profileName%, AutoY, 10
     AutoY := (v = "ERROR" || v = "") ? 10.0 : v + 0.0
-    IniRead, v, %ini%, %profileName%, AutoX, 0
-    AutoX := (v = "ERROR" || v = "") ? 0.0 : v + 0.0
-    IniRead, v, %ini%, %profileName%, AutoY_Up, 0.5
-    AutoY_Up := (v = "ERROR" || v = "") ? 0.5 : v + 0.0
+    IniRead, v, %ini%, %profileName%, AutoX, 2
+    AutoX := (v = "ERROR" || v = "") ? 2.0 : v + 0.0
+    IniRead, v, %ini%, %profileName%, AutoY_Up, 1
+    AutoY_Up := (v = "ERROR" || v = "") ? 1.0 : v + 0.0
     IniRead, v, %ini%, %profileName%, TapY, 16
     TapY := (v = "ERROR" || v = "") ? 16.0 : v + 0.0
-    IniRead, v, %ini%, %profileName%, ClampX, 0
-    ClampX := (v = "ERROR" || v = "") ? 0.0 : v + 0.0
+    IniRead, v, %ini%, %profileName%, ClampX, 2
+    ClampX := (v = "ERROR" || v = "") ? 2.0 : v + 0.0
     IniRead, v, %ini%, %profileName%, ShiftBoost, 3
     ShiftBoost := (v = "ERROR" || v = "") ? 3.0 : v + 0.0
     IniRead, v, %ini%, %profileName%, Increment, 0.1
@@ -445,31 +418,29 @@ HandleTapFireAutoRecoil:
     Sleep, %DelayRateTap%
 return
 
+; Original-style loop (friend backup): step Y once per second, plain Sleep.
+; Strength/DPI/Sens only scale once via PullScale - Advanced numbers stay WYSIWYG.
 HandleFullAutoRecoil() {
     global DelayRateAuto, InitialY, AutoY, AutoX, AutoY_Up, ShiftBoost, Increment, ToggleKey
     ResetSubpixel()
     sc := PullScale()
-    startY := InitialY + 0.0
+    currentY := InitialY + 0.0
     maxY := AutoY + 0.0
-    if (maxY < startY)
-        maxY := startY
-    ; Increment = how fast pull climbs toward AutoY (units of Y per second)
-    rampPerSec := Increment + 0.0
-    if (rampPerSec < 0)
-        rampPerSec := 0
+    if (maxY < currentY)
+        maxY := currentY
     startTime := A_TickCount
     while (GetKeyState("LButton", "P") && GetKeyState("RButton", "P") && GetKeyState(ToggleKey, "T")) {
-        elapsed := A_TickCount - startTime
-        currentY := startY + rampPerSec * (elapsed / 1000.0)
-        if (currentY > maxY)
-            currentY := maxY
-        fo := SprayBoost(elapsed)
         boost := GetKeyState("Shift", "P") ? ShiftBoost : 0
-        dy := (currentY + boost) * fo * sc - AutoY_Up * sc
-        ; AutoX is optional side bias - keep 0 for a clean vertical pull
+        dy := (currentY + boost - AutoY_Up) * sc
         dx := AutoX * sc
         SendRelativeMouseMove(dx, dy)
-        PreciseSleep(DelayRateAuto)
+        Sleep, %DelayRateAuto%
+        if (A_TickCount - startTime >= 1000) {
+            currentY += Increment
+            if (currentY > maxY)
+                currentY := maxY
+            startTime := A_TickCount
+        }
     }
     ResetSubpixel()
 }
