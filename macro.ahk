@@ -11,8 +11,9 @@ CoordMode, Mouse, Screen
 SetDefaultMouseSpeed, 0
 
 ; ============================================================
-;  SLYNX RCS - Profile = weapon curve
-;  Strength + DPI/Sens + Scope scale the profile knobs
+;  SLYNX RCS - Profile = gun curve
+;  Globals (Strength/DPI/Sens) live in [MasterSwitch]
+;  Per-gun knobs live in each [Profile] section
 ;  Alt+scroll cycles profiles (guns)
 ; ============================================================
 global EnableRCS := 1
@@ -54,6 +55,7 @@ global AccX := 0.0
 global AccY := 0.0
 
 LoadProfiles()
+RestoreActiveProfileIdx()
 CreateProfileOverlay()
 ApplyProfile(ProfileList[activeProfileIdx])
 
@@ -135,6 +137,57 @@ LoadProfiles() {
         ProfileList := ["Universal", "M416", "AKM", "Beryl", "SCAR", "AUG", "UMP", "Vector", "Uzi", "Bizon"]
 }
 
+RestoreActiveProfileIdx() {
+    global ProfileList, activeProfileIdx
+    filePath := A_AppData . "\SlynxMacro\active_profile.ini"
+    if (!FileExist(filePath))
+        return
+    FileRead, savedName, %filePath%
+    savedName := Trim(savedName)
+    if (savedName = "")
+        return
+    Loop, % ProfileList.MaxIndex() {
+        if (ProfileList[A_Index] = savedName) {
+            activeProfileIdx := A_Index
+            return
+        }
+    }
+}
+
+LoadGlobals(ini, profileName) {
+    global EnableRCS, Strength, UserDPI, BaseDPI, UserSens, BaseSens
+    ; Prefer [MasterSwitch] machine-wide values; fall back to profile section (old INI).
+    IniRead, v, %ini%, MasterSwitch, EnableRCS, ERROR
+    if (v = "ERROR" || v = "")
+        IniRead, v, %ini%, %profileName%, MasterSwitch, 1
+    EnableRCS := v
+
+    IniRead, v, %ini%, MasterSwitch, Strength, ERROR
+    if (v = "ERROR" || v = "")
+        IniRead, v, %ini%, %profileName%, Strength, 100
+    Strength := v
+
+    IniRead, v, %ini%, MasterSwitch, UserDPI, ERROR
+    if (v = "ERROR" || v = "")
+        IniRead, v, %ini%, %profileName%, UserDPI, 800
+    UserDPI := (v = "ERROR" || v = "") ? 800 : v + 0
+
+    IniRead, v, %ini%, MasterSwitch, BaseDPI, ERROR
+    if (v = "ERROR" || v = "")
+        IniRead, v, %ini%, %profileName%, BaseDPI, 800
+    BaseDPI := (v = "ERROR" || v = "") ? 800 : v + 0
+
+    IniRead, v, %ini%, MasterSwitch, UserSens, ERROR
+    if (v = "ERROR" || v = "")
+        IniRead, v, %ini%, %profileName%, UserSens, 50
+    UserSens := (v = "ERROR" || v = "") ? 50 : v + 0.0
+
+    IniRead, v, %ini%, MasterSwitch, BaseSens, ERROR
+    if (v = "ERROR" || v = "")
+        IniRead, v, %ini%, %profileName%, BaseSens, 50
+    BaseSens := (v = "ERROR" || v = "") ? 50 : v + 0.0
+}
+
 CreateProfileOverlay() {
     global RowText1, RowText2, RowText3, RowText4, RowText5, overlayW, overlayRowH
     alphas := [55, 130, 220, 130, 55]
@@ -183,27 +236,14 @@ WriteActiveProfile() {
 }
 
 ApplyProfile(profileName) {
-    global EnableRCS, Strength, currentProfile
+    global currentProfile
     global InitialY, AutoY, AutoX, AutoY_Up, TapY, ClampX, ShiftBoost, Increment, DelayRateAuto
-    global UserDPI, BaseDPI, UserSens, BaseSens
     if (profileName = "")
         return
     currentProfile := profileName
     ini := A_AppData . "\SlynxMacro\profiles.ini"
 
-    IniRead, v, %ini%, %profileName%, MasterSwitch, 1
-    EnableRCS := v
-    IniRead, v, %ini%, %profileName%, Strength, 100
-    Strength := v
-
-    IniRead, v, %ini%, %profileName%, UserDPI, 800
-    UserDPI := (v = "ERROR" || v = "") ? 800 : v + 0
-    IniRead, v, %ini%, %profileName%, BaseDPI, 800
-    BaseDPI := (v = "ERROR" || v = "") ? 800 : v + 0
-    IniRead, v, %ini%, %profileName%, UserSens, 50
-    UserSens := (v = "ERROR" || v = "") ? 50 : v + 0.0
-    IniRead, v, %ini%, %profileName%, BaseSens, 50
-    BaseSens := (v = "ERROR" || v = "") ? 50 : v + 0.0
+    LoadGlobals(ini, profileName)
 
     IniRead, v, %ini%, %profileName%, InitialY, 8
     InitialY := (v = "ERROR" || v = "") ? 8.0 : v + 0.0
