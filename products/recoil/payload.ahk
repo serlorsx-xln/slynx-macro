@@ -36,8 +36,9 @@ global BaseDPI := 800
 global UserSens := 50
 global BaseSens := 50
 
-global FirstShotMs := 350
-global FirstShotMult := 1.30
+; Softer first-shot boost = less "pop" on early rounds
+global FirstShotMs := 220
+global FirstShotMult := 1.12
 
 global MenuHotkey := "F2"
 global ToggleKey := "CapsLock"
@@ -107,6 +108,21 @@ ResetSubpixel() {
     global AccX, AccY
     AccX := 0.0
     AccY := 0.0
+}
+
+; Tighter cadence than Sleep alone (Windows timer ~15ms).
+PreciseSleep(ms) {
+    if (ms <= 0)
+        return
+    DllCall("QueryPerformanceFrequency", "Int64*", freq)
+    DllCall("QueryPerformanceCounter", "Int64*", start)
+    if (ms > 2)
+        Sleep, % ms - 2
+    Loop {
+        DllCall("QueryPerformanceCounter", "Int64*", now)
+        if (((now - start) * 1000) / freq >= ms)
+            break
+    }
 }
 
 SendRelativeMouseMove(dx, dy) {
@@ -433,26 +449,27 @@ HandleFullAutoRecoil() {
     global DelayRateAuto, InitialY, AutoY, AutoX, AutoY_Up, ShiftBoost, Increment, ToggleKey
     ResetSubpixel()
     sc := PullScale()
-    currentY := InitialY + 0.0
+    startY := InitialY + 0.0
     maxY := AutoY + 0.0
-    if (maxY < currentY)
-        maxY := currentY
+    if (maxY < startY)
+        maxY := startY
+    ; Increment = how fast pull climbs toward AutoY (units of Y per second)
+    rampPerSec := Increment + 0.0
+    if (rampPerSec < 0)
+        rampPerSec := 0
     startTime := A_TickCount
-    rampClock := A_TickCount
     while (GetKeyState("LButton", "P") && GetKeyState("RButton", "P") && GetKeyState(ToggleKey, "T")) {
         elapsed := A_TickCount - startTime
+        currentY := startY + rampPerSec * (elapsed / 1000.0)
+        if (currentY > maxY)
+            currentY := maxY
         fo := SprayBoost(elapsed)
         boost := GetKeyState("Shift", "P") ? ShiftBoost : 0
         dy := (currentY + boost) * fo * sc - AutoY_Up * sc
+        ; AutoX is optional side bias - keep 0 for a clean vertical pull
         dx := AutoX * sc
         SendRelativeMouseMove(dx, dy)
-        if (A_TickCount - rampClock >= 1000) {
-            currentY += Increment
-            if (currentY > maxY)
-                currentY := maxY
-            rampClock := A_TickCount
-        }
-        Sleep, %DelayRateAuto%
+        PreciseSleep(DelayRateAuto)
     }
     ResetSubpixel()
 }
