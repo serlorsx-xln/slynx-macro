@@ -18,7 +18,6 @@ SetDefaultMouseSpeed, 0
 global EnableRCS := 1
 global Strength := 100
 global currentProfile := "Universal"
-global currentScope := "1x"
 
 global InitialY := 8.0
 global AutoY := 10.0
@@ -38,7 +37,6 @@ global BaseSens := 50
 
 global FirstShotMs := 350
 global FirstShotMult := 1.30
-global ScopeMult := 1.0
 
 global MenuHotkey := "F2"
 global ToggleKey := "CapsLock"
@@ -67,21 +65,9 @@ SetTimer, WatchKeys, 10
 return
 
 ; ============================================================
-ScopeMultiplier(scopeName) {
-    if (scopeName = "2x")
-        return 1.30
-    if (scopeName = "3x")
-        return 1.60
-    if (scopeName = "4x")
-        return 2.00
-    if (scopeName = "6x")
-        return 2.60
-    return 1.00
-}
-
-; Strength * DPI/sens * Scope
+; Strength * DPI/sens (scope sens is handled in-game)
 PullScale() {
-    global Strength, UserDPI, BaseDPI, UserSens, BaseSens, ScopeMult
+    global Strength, UserDPI, BaseDPI, UserSens, BaseSens
     sf := Strength + 0.0
     if (sf < 1)
         sf := 1
@@ -98,7 +84,7 @@ PullScale() {
         us := 0.1
     if (bs < 0.1)
         bs := 50
-    return sf * (bd / ud) * (bs / us) * ScopeMult
+    return sf * (bd / ud) * (bs / us)
 }
 
 SprayBoost(elapsedMs) {
@@ -197,7 +183,7 @@ WriteActiveProfile() {
 }
 
 ApplyProfile(profileName) {
-    global EnableRCS, Strength, currentScope, ScopeMult, currentProfile
+    global EnableRCS, Strength, currentProfile
     global InitialY, AutoY, AutoX, AutoY_Up, TapY, ClampX, ShiftBoost, Increment, DelayRateAuto
     global UserDPI, BaseDPI, UserSens, BaseSens
     if (profileName = "")
@@ -209,11 +195,6 @@ ApplyProfile(profileName) {
     EnableRCS := v
     IniRead, v, %ini%, %profileName%, Strength, 100
     Strength := v
-    IniRead, v, %ini%, %profileName%, Scope, 1x
-    if (v = "ERROR" || v = "")
-        v := "1x"
-    currentScope := v
-    ScopeMult := ScopeMultiplier(currentScope)
 
     IniRead, v, %ini%, %profileName%, UserDPI, 800
     UserDPI := (v = "ERROR" || v = "") ? 800 : v + 0
