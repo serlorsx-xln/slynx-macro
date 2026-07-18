@@ -22,10 +22,10 @@ global currentProfile := "Universal"
 
 global InitialY := 8.0
 global AutoY := 10.0
-global AutoX := 2.0
-global AutoY_Up := 1.0
+global AutoX := 0.0
+global AutoY_Up := 0.5
 global TapY := 16.0
-global ClampX := 2.0
+global ClampX := 0.0
 global ShiftBoost := 3.0
 global Increment := 0.1
 global DelayRateAuto := 12
@@ -301,14 +301,14 @@ ApplyProfile(profileName) {
     InitialY := (v = "ERROR" || v = "") ? 8.0 : v + 0.0
     IniRead, v, %ini%, %profileName%, AutoY, 10
     AutoY := (v = "ERROR" || v = "") ? 10.0 : v + 0.0
-    IniRead, v, %ini%, %profileName%, AutoX, 2
-    AutoX := (v = "ERROR" || v = "") ? 2.0 : v + 0.0
-    IniRead, v, %ini%, %profileName%, AutoY_Up, 1
-    AutoY_Up := (v = "ERROR" || v = "") ? 1.0 : v + 0.0
+    IniRead, v, %ini%, %profileName%, AutoX, 0
+    AutoX := (v = "ERROR" || v = "") ? 0.0 : v + 0.0
+    IniRead, v, %ini%, %profileName%, AutoY_Up, 0.5
+    AutoY_Up := (v = "ERROR" || v = "") ? 0.5 : v + 0.0
     IniRead, v, %ini%, %profileName%, TapY, 16
     TapY := (v = "ERROR" || v = "") ? 16.0 : v + 0.0
-    IniRead, v, %ini%, %profileName%, ClampX, 2
-    ClampX := (v = "ERROR" || v = "") ? 2.0 : v + 0.0
+    IniRead, v, %ini%, %profileName%, ClampX, 0
+    ClampX := (v = "ERROR" || v = "") ? 0.0 : v + 0.0
     IniRead, v, %ini%, %profileName%, ShiftBoost, 3
     ShiftBoost := (v = "ERROR" || v = "") ? 3.0 : v + 0.0
     IniRead, v, %ini%, %profileName%, Increment, 0.1
