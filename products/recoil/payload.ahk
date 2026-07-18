@@ -226,7 +226,8 @@ UpdateOverlay(animate=false) {
             Gui, Row%i%:Font, s11 c555555 norm, Segoe UI
         } else if (dist = 0) {
             st := OverlayStrengthFor(name)
-            label := "▸  " . name . "   ·   " . st . "%"
+            ; ASCII only - fancy unicode (▸ ·) shows as junk glyphs on some Windows fonts
+            label := "> " . name . " - " . st . "%"
             Gui, Row%i%:Font, s13 cFFFFFF bold, Segoe UI
         } else if (dist = 1) {
             label := name
