@@ -11,13 +11,12 @@ CoordMode, Mouse, Screen
 SetDefaultMouseSpeed, 0
 
 ; ============================================================
-;  SLYNX RCS - Profile = gun curve
+;  SLYNX RCS - Profile = gun curve (Universal, Beryl, AUG)
 ;  Machine globals (DPI/Sens/Enable) live in [MasterSwitch]
-;  Per-gun Strength + curve knobs live in each [Profile] section
+;  Per-gun curve knobs live in each [Profile] section
 ;  Alt+scroll cycles profiles (guns)
 ; ============================================================
 global EnableRCS := 1
-global Strength := 100
 global currentProfile := "Universal"
 
 global InitialY := 8.0
@@ -70,13 +69,9 @@ SetTimer, WatchKeys, 10
 return
 
 ; ============================================================
-; Strength * DPI/sens (scope sens is handled in-game)
+; DPI/sens scale (scope sens is handled in-game)
 PullScale() {
-    global Strength, UserDPI, BaseDPI, UserSens, BaseSens
-    sf := Strength + 0.0
-    if (sf < 1)
-        sf := 1
-    sf := sf / 100.0
+    global UserDPI, BaseDPI, UserSens, BaseSens
     ud := UserDPI + 0.0
     bd := BaseDPI + 0.0
     us := UserSens + 0.0
@@ -89,7 +84,7 @@ PullScale() {
         us := 0.1
     if (bs < 0.1)
         bs := 50
-    return sf * (bd / ud) * (bs / us)
+    return (bd / ud) * (bs / us)
 }
 
 ResetSubpixel() {
@@ -122,14 +117,7 @@ SendRelativeMouseMove(dx, dy) {
 
 LoadProfiles() {
     global ProfileList
-    ProfileList := []
-    Loop, 20 {
-        IniRead, pName, %A_AppData%\SlynxMacro\profiles.ini, Profiles, %A_Index%
-        if (pName != "ERROR" && pName != "")
-            ProfileList.Push(pName)
-    }
-    if (ProfileList.MaxIndex() == 0)
-        ProfileList := ["Universal", "M416", "AKM", "Beryl", "SCAR", "AUG", "UMP", "Vector", "Uzi", "Bizon"]
+    ProfileList := ["Universal", "Beryl", "AUG"]
 }
 
 RestoreActiveProfileIdx() {
@@ -147,11 +135,14 @@ RestoreActiveProfileIdx() {
             return
         }
     }
+    ; Old gun name (e.g. M416) - clamp to Universal and fix ini so UI stays in sync
+    activeProfileIdx := 1
+    WriteActiveProfile()
 }
 
 LoadGlobals(ini, profileName) {
     global EnableRCS, UserDPI, BaseDPI, UserSens, BaseSens
-    ; Machine-wide from [MasterSwitch]; Strength is per-gun (loaded in ApplyProfile).
+    ; Machine-wide from [MasterSwitch]; curve knobs load in ApplyProfile.
     IniRead, v, %ini%, MasterSwitch, EnableRCS, ERROR
     if (v = "ERROR" || v = "")
         IniRead, v, %ini%, %profileName%, MasterSwitch, 1
@@ -198,16 +189,6 @@ CreateProfileOverlay() {
     }
 }
 
-OverlayStrengthFor(profileName) {
-    if (profileName = "")
-        return ""
-    ini := A_AppData . "\SlynxMacro\profiles.ini"
-    IniRead, v, %ini%, %profileName%, Strength, 100
-    if (v = "ERROR" || v = "")
-        v := 100
-    return v
-}
-
 UpdateOverlay(animate=false) {
     global ProfileList, activeProfileIdx
     global RowHwnd1, RowHwnd2, RowHwnd3, RowHwnd4, RowHwnd5
@@ -225,9 +206,7 @@ UpdateOverlay(animate=false) {
             label := ""
             Gui, Row%i%:Font, s11 c555555 norm, Segoe UI
         } else if (dist = 0) {
-            st := OverlayStrengthFor(name)
-            ; ASCII only - fancy unicode (▸ ·) shows as junk glyphs on some Windows fonts
-            label := "> " . name . " - " . st . "%"
+            label := "> " . name
             Gui, Row%i%:Font, s13 cFFFFFF bold, Segoe UI
         } else if (dist = 1) {
             label := name
@@ -259,7 +238,7 @@ WriteActiveProfile() {
 }
 
 ApplyProfile(profileName) {
-    global currentProfile, Strength
+    global currentProfile
     global InitialY, AutoY, AutoX, AutoY_Up, TapY, ClampX, ShiftBoost, Increment, DelayRateAuto
     if (profileName = "")
         return
@@ -267,9 +246,6 @@ ApplyProfile(profileName) {
     ini := A_AppData . "\SlynxMacro\profiles.ini"
 
     LoadGlobals(ini, profileName)
-
-    IniRead, v, %ini%, %profileName%, Strength, 100
-    Strength := (v = "ERROR" || v = "") ? 100 : v + 0
 
     IniRead, v, %ini%, %profileName%, InitialY, 8
     InitialY := (v = "ERROR" || v = "") ? 8.0 : v + 0.0
@@ -419,8 +395,8 @@ HandleTapFireAutoRecoil:
     Sleep, %DelayRateTap%
 return
 
-; Original-style loop (friend backup): step Y once per second, plain Sleep.
-; Strength/DPI/Sens only scale once via PullScale - Advanced numbers stay WYSIWYG.
+; Original-style loop: step Y once per second, plain Sleep.
+; WYSIWYG curve values; DPI/Sens scale via PullScale only.
 HandleFullAutoRecoil() {
     global DelayRateAuto, InitialY, AutoY, AutoX, AutoY_Up, ShiftBoost, Increment, ToggleKey
     ResetSubpixel()
