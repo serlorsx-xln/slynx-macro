@@ -11,7 +11,7 @@ CoordMode, Mouse, Screen
 SetDefaultMouseSpeed, 0
 
 ; ============================================================
-;  SLYNX RCS - Profile = gun curve (Universal, Beryl, AUG)
+;  SLYNX RCS - Built-in: Universal, Beryl, AUG (+ user profiles from profiles.ini)
 ;  Machine globals (DPI/Sens/Enable) live in [MasterSwitch]
 ;  Per-gun curve knobs live in each [Profile] section
 ;  Alt+scroll cycles profiles (guns)
@@ -117,7 +117,14 @@ SendRelativeMouseMove(dx, dy) {
 
 LoadProfiles() {
     global ProfileList
-    ProfileList := ["Universal", "Beryl", "AUG"]
+    ProfileList := []
+    Loop, 20 {
+        IniRead, pName, %A_AppData%\SlynxMacro\profiles.ini, Profiles, %A_Index%
+        if (pName != "ERROR" && pName != "")
+            ProfileList.Push(pName)
+    }
+    if (ProfileList.MaxIndex() == 0)
+        ProfileList := ["Universal", "Beryl", "AUG"]
 }
 
 RestoreActiveProfileIdx() {
